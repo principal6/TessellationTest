@@ -8,7 +8,7 @@ HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(InputPatch<VS_OUTPUT, 3> Patch, uin
 	Output.EdgeTessFactor[1] = 3.0f;
 	Output.EdgeTessFactor[2] = 3.0f;
 
-	Output.InsideTessFactor = 5.0f;
+	Output.InsideTessFactor = 3.0f;
 
 	return Output;
 }

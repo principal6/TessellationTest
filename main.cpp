@@ -24,10 +24,19 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	CGameObject3D* goTri{ Game.AddGameObject3D("Tri") };
 	{
-		SMesh Mesh{ GenerateTriangle(XMVectorSet(0, 1, 4, 1), XMVectorSet(1, -1, 4, 1), XMVectorSet(-1, -1, 4, 1),
+		SMesh Mesh{ GenerateTriangle(XMVectorSet(0, 1, 0, 1), XMVectorSet(1, -1, 0, 1), XMVectorSet(-1, -1, 0, 1),
 			XMVectorSet(1, 0, 0, 1), XMVectorSet(0, 1, 0, 1), XMVectorSet(0, 0, 1, 1)) };
+		Mesh.vVertices[0].Normal = XMVector3Normalize(XMVectorSet(0, +1.0f, -1.0f, 0));
+		Mesh.vVertices[1].Normal = XMVector3Normalize(XMVectorSet(+1.0f, 0, -1.0f, 0));
+		Mesh.vVertices[2].Normal = XMVector3Normalize(XMVectorSet(-1.0f, 0, -1.0f, 0));
+		
+		/*
+		SMesh Mesh{ GenerateCube(XMVectorSet(1, 0, 1, 1)) };
 		CalculateFaceNormals(Mesh);
 		CalculateVertexNormalsFromFaceNormals(Mesh);
+		*/
+
+		goTri->ComponentTransform.Translation = XMVectorSet(0, 0, 4.0f, 0);
 
 		goTri->ComponentRender.PtrObject3D = Game.AddObject3D();
 		goTri->ComponentRender.PtrObject3D->Create(Mesh);
