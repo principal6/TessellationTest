@@ -515,17 +515,19 @@ void CTerrain::Draw(bool bUseTerrainSelector, bool bDrawNormals)
 		m_PtrDeviceContext->RSSetState(m_PtrGame->GetCommonStates()->Wireframe());
 		m_PtrDeviceContext->PSSetShaderResources(0, 0, nullptr);
 
-		m_Object3D->Draw(true);
-	}
+		if (bDrawNormals)
+		{
+			m_PtrGame->GetBaseShader(EBaseShader::GSNormal)->Use();
 
-	if (bDrawNormals)
-	{
-		m_PtrGame->GetBaseShader(EBaseShader::PSVertexColor)->Use();
-		m_PtrGame->GetBaseShader(EBaseShader::GSNormal)->Use();
+			m_Object3D->Draw(true);
 
-		m_Object3D->DrawNormals();
-
-		m_PtrDeviceContext->GSSetShader(nullptr, nullptr, 0);
+			m_PtrDeviceContext->GSSetShader(nullptr, nullptr, 0);
+		}
+		else
+		{
+			m_Object3D->Draw(true);
+		}
+		
 	}
 }
 

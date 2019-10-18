@@ -41,6 +41,9 @@ enum class EBaseShader
 	VSGizmo,
 	VSBase2D,
 
+	HSBase,
+	DSBase,
+
 	GSNormal,
 
 	PSBase,
@@ -315,7 +318,6 @@ public:
 private:
 	void UpdateGameObject3D(CGameObject3D* PtrGO);
 	void DrawGameObject3D(CGameObject3D* PtrGO);
-	void DrawGameObject3DNormal(CGameObject3D* PtrGO);
 	void DrawGameObject3DBoundingSphere(CGameObject3D* PtrGO);
 
 	void DrawGameObject3DLines();
