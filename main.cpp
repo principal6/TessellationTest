@@ -26,7 +26,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	{
 		goTri->ComponentRender.PtrObject3D = Game.AddObject3D();
 		goTri->ComponentRender.PtrObject3D->Create(GenerateTriangle(XMVectorSet(0, 1, 4, 1), XMVectorSet(1, -1, 4, 1), XMVectorSet(-1, -1, 4, 1),
-			XMVectorSet(1, 0, 1, 1)));
+			XMVectorSet(1, 0, 0, 1), XMVectorSet(0, 1, 0, 1), XMVectorSet(0, 0, 1, 1)));
 		goTri->ComponentRender.PtrObject3D->SetbUseTessellation(true);
 
 		goTri->ComponentRender.PtrPS = Game.GetBaseShader(EBaseShader::PSVertexColor);
