@@ -26,6 +26,7 @@ VS_OUTPUT main(VS_INPUT_ANIMATION input)
 
 	float4 ResultPosition = float4(mul(input.Position, FinalBone).xyz, 1);
 	float4 ResultNormal = normalize(mul(input.Normal, FinalBone));
+	float4 ResultTangent = normalize(mul(input.Tangent, FinalBone));
 
 	output.Position = mul(ResultPosition, WVP);
 	output.WorldPosition = mul(ResultPosition, World);
@@ -33,7 +34,10 @@ VS_OUTPUT main(VS_INPUT_ANIMATION input)
 	output.UV = input.UV;
 
 	output.WorldNormal = normalize(mul(ResultNormal, World));
-	output.WVPNormal = normalize(mul(ResultNormal, WVP));
+	output.WorldTangent = normalize(mul(ResultTangent, World));
+	output.WorldBitangent = float4(normalize(cross(output.WorldNormal.xyz, output.WorldTangent.xyz)), 0);
+
+	output.bUseVertexColor = 0;
 
 	return output;
 }

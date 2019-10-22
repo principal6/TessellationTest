@@ -7,15 +7,18 @@
 // << SMOD FILE STRUCTURE >>
 // 8B SMOD Signature
 // ##### MATERIAL #####
-// 1B (uint8_t) Material count (558B == Each material)
+// 1B (uint8_t) Material count (559B == Each material)
 // # 1B (uint8_t) Material index
-// # 1B (bool) has texture
+// # 512B (string, MAX) Material name
+// # 1B (bool) bHasTexture
 // # 12B (XMFLOAT3) ambient
 // # 12B (XMFLOAT3) diffuse
 // # 12B (XMFLOAT3) specular
 // # 4B (float) specular exponent
 // # 4B (float) specular intensity
-// # 512B (string, MAX) texture file name
+// # 1B (bool) bShouldGenerateAutoMipMap
+// # 512B (string, MAX) diffuse texture file name
+// # 512B (string, MAX) normal texture file name
 // ##### MESH #####
 // 1B (uint8_t) Mesh count
 // # 1B (uint8_t) Mesh index
@@ -153,38 +156,50 @@ static void _ReadStaticModelFile(std::ifstream& ifs, SModel& Model)
 	// 1B (uint8_t) Material count
 	READ_BYTES(1);
 	Model.vMaterials.resize(READ_BYTES_TO_UINT32);
-	for (SMaterial& Material : Model.vMaterials)
+	for (CMaterial& Material : Model.vMaterials)
 	{
 		// # 1B (uint8_t) Material index
 		READ_BYTES(1);
 
-		// # 1B (bool) has texture
+		// # 512B (string, MAX) Material name
+		READ_BYTES(512);
+		Material.SetName(ReadBytes);
+
+		// # 1B (bool) has texture ( automatically set by SetTextureFileName() )
 		READ_BYTES(1);
-		Material.bHasTexture = READ_BYTES_TO_BOOL;
+		READ_BYTES_TO_BOOL;
 
 		// # 12B (XMFLOAT3) ambient
 		READ_BYTES(12);
-		Material.MaterialAmbient = READ_BYTES_TO_XMFLOAT3;
+		Material.SetAmbientColor(READ_BYTES_TO_XMFLOAT3);
 
 		// # 12B (XMFLOAT3) diffuse
 		READ_BYTES(12);
-		Material.MaterialDiffuse = READ_BYTES_TO_XMFLOAT3;
+		Material.SetDiffuseColor(READ_BYTES_TO_XMFLOAT3);
 
 		// # 12B (XMFLOAT3) specular
 		READ_BYTES(12);
-		Material.MaterialSpecular = READ_BYTES_TO_XMFLOAT3;
+		Material.SetSpecularColor(READ_BYTES_TO_XMFLOAT3);
 
 		// # 4B (float) specular exponent
 		READ_BYTES(4);
-		Material.SpecularExponent = READ_BYTES_TO_FLOAT;
+		Material.SetSpecularExponent(READ_BYTES_TO_FLOAT);
 
 		// # 4B (float) specular intensity
 		READ_BYTES(4);
-		Material.SpecularIntensity = READ_BYTES_TO_FLOAT;
+		Material.SetSpecularIntensity(READ_BYTES_TO_FLOAT);
 
-		// # 512B (string, MAX) texture file name
+		// # 1B (bool) bShouldGenerateAutoMipMap
+		READ_BYTES(1);
+		Material.SetbShouldGenerateAutoMipMap(READ_BYTES_TO_BOOL);
+
+		// # 512B (string, MAX) diffuse texture file name
 		READ_BYTES(512);
-		Material.TextureFileName = ReadBytes;
+		Material.SetDiffuseTextureFileName(ReadBytes);
+
+		// # 512B (string, MAX) normal texture file name
+		READ_BYTES(512);
+		Material.SetNormalTextureFileName(ReadBytes);
 	}
 
 	// ##### MESH #####
@@ -269,7 +284,7 @@ static SModel ImportStaticModel(const string& FileName)
 
 static void _WriteStaticModelFile(std::ofstream& ofs, const SModel& Model)
 {
-	char TextureFileNameBytes[512]{};
+	char StringBytes[512]{};
 	char Uint32Bytes[4]{};
 	char FloatBytes[4]{};
 	char XMFLOAT3Bytes[12]{};
@@ -280,33 +295,46 @@ static void _WriteStaticModelFile(std::ofstream& ofs, const SModel& Model)
 	ofs.put((uint8_t)Model.vMaterials.size());
 
 	// 559B == Each material
-	for (const SMaterial& Material : Model.vMaterials)
+	for (const CMaterial& Material : Model.vMaterials)
 	{
 		// 1B (uint8_t) Material index
 		ofs.put(iMaterial);
 
+		// 512B (string, MAX) Material name
+		memset(StringBytes, 0, 512);
+		memcpy(StringBytes, Material.GetName().data(), min(Material.GetName().size(), (size_t)512));
+		ofs.write(StringBytes, 512);
+
 		// 1B (bool) has texture
-		ofs.put(Material.bHasTexture);
+		ofs.put(Material.HasTexture());
 
 		// 12B (XMFLOAT3) ambient
-		WRITE_XMFLOAT3_TO_BYTES(Material.MaterialAmbient);
+		WRITE_XMFLOAT3_TO_BYTES(Material.GetAmbientColor());
 
 		// 12B (XMFLOAT3) diffuse
-		WRITE_XMFLOAT3_TO_BYTES(Material.MaterialDiffuse);
+		WRITE_XMFLOAT3_TO_BYTES(Material.GetDiffuseColor());
 
 		// 12B (XMFLOAT3) specular
-		WRITE_XMFLOAT3_TO_BYTES(Material.MaterialSpecular);
+		WRITE_XMFLOAT3_TO_BYTES(Material.GetSpecularColor());
 
 		// 4B (float) specular exponent
-		WRITE_FLOAT_TO_BYTES(Material.SpecularExponent);
+		WRITE_FLOAT_TO_BYTES(Material.GetSpecularExponent());
 
 		// 4B (float) specular intensity
-		WRITE_FLOAT_TO_BYTES(Material.SpecularIntensity);
+		WRITE_FLOAT_TO_BYTES(Material.GetSpecularIntensity());
 
-		// 512B (string, MAX) texture file name
-		memset(TextureFileNameBytes, 0, 512);
-		memcpy(TextureFileNameBytes, Material.TextureFileName.data(), min(Material.TextureFileName.size(), (size_t)512));
-		ofs.write(TextureFileNameBytes, 512);
+		// 1B (bool) bShouldGenerateAutoMipMap
+		ofs.put(Material.ShouldGenerateAutoMipMap());
+
+		// 512B (string, MAX) diffuse texture file name
+		memset(StringBytes, 0, 512);
+		memcpy(StringBytes, Material.GetDiffuseTextureFileName().data(), min(Material.GetDiffuseTextureFileName().size(), (size_t)512));
+		ofs.write(StringBytes, 512);
+
+		// 512B (string, MAX) normal texture file name
+		memset(StringBytes, 0, 512);
+		memcpy(StringBytes, Material.GetNormalTextureFileName().data(), min(Material.GetNormalTextureFileName().size(), (size_t)512));
+		ofs.write(StringBytes, 512);
 
 		++iMaterial;
 	}

@@ -28,6 +28,9 @@
     <Filter Include="TinyXml2">
       <UniqueIdentifier>{fff3cf0d-0073-4b99-a250-3f6d9ace4d91}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ImGui">
+      <UniqueIdentifier>{255b61e1-9548-4bef-88e8-04c84308370a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -37,9 +40,6 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Object3D.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\Texture.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Core\Game.cpp">
@@ -66,7 +66,31 @@
     <ClCompile Include="Core\GameObject3DLine.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="ImGui\imgui.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_demo.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_draw.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_impl_dx11.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_impl_win32.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_widgets.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
     <ClCompile Include="Core\Terrain.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Material.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\AssimpLoader.cpp">
       <Filter>Core</Filter>
     </ClCompile>
   </ItemGroup>
@@ -144,9 +168,6 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="Core\PrimitiveGenerator.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="Core\Texture.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="Assimp\aabb.h">
@@ -401,10 +422,37 @@
     <ClInclude Include="Core\Serializator.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="ImGui\imconfig.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_impl_dx11.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_impl_win32.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_internal.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_rectpack.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_textedit.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_truetype.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
     <ClInclude Include="Core\ModelPorter.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="Core\Terrain.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Material.h">
       <Filter>Core</Filter>
     </ClInclude>
   </ItemGroup>
@@ -497,17 +545,22 @@
     <FxCompile Include="Shader\VSGizmo.hlsl">
       <Filter>Shader</Filter>
     </FxCompile>
-    <FxCompile Include="Shader\PSTerrainEdit.hlsl">
-      <Filter>Shader</Filter>
-    </FxCompile>
     <FxCompile Include="Shader\PSMasking2D.hlsl">
       <Filter>Shader</Filter>
     </FxCompile>
-    <FxCompile Include="Shader\HSBase.hlsl">
+    <FxCompile Include="Shader\DSBezier.hlsl">
       <Filter>Shader</Filter>
     </FxCompile>
-    <FxCompile Include="Shader\DSBase.hlsl">
+    <FxCompile Include="Shader\HSBezier.hlsl">
       <Filter>Shader</Filter>
     </FxCompile>
+    <FxCompile Include="Shader\PSTerrain.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="ImGui\imgui.natvis">
+      <Filter>ImGui</Filter>
+    </Natvis>
   </ItemGroup>
 </Project>

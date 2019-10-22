@@ -2,7 +2,7 @@
 
 #include "Object2D.h"
 #include "Object3D.h"
-#include "Texture.h"
+#include "Material.h"
 
 class CGame;
 
@@ -35,7 +35,7 @@ public:
 	~CTerrain() {}
 
 public:
-	void Create(const XMFLOAT2& TerrainSize, const string& TextureFileName, float MaskingDetail);
+	void Create(const XMFLOAT2& TerrainSize, const CMaterial& Material, float MaskingDetail);
 	void Load(const string& FileName);
 	void Save(const string& FileName);
 
@@ -44,19 +44,21 @@ private:
 
 public:
 	const XMFLOAT2& GetSize() const;
-	int GetTextureCount() const;
-	const string& GetTextureFileName(int TextureID) const;
+	int GetMaterialCount() const;
 	const XMFLOAT2& GetSelectionRoundUpPosition() const;
 	float GetMaskingTextureDetail() const;
+	const CMaterial& GetMaterial(int Index) const;
 
 public:
-	void SetTexture(int TextureID, const string& TextureFileName);
-	void AddTexture(const string& TextureFileName);
+	void AddMaterial(const CMaterial& Material);
+	void SetMaterial(int MaterialID, const CMaterial& NewMaterial);
 	
-	void UpdateVertexNormals();
+	void UpdateVertexNormalsTangents();
 
 	void SelectTerrain(const XMVECTOR& PickingRayOrigin, const XMVECTOR& PickingRayDirection, bool bShouldEdit, bool bIsLeftButton, float DeltaHeightFactor);
 	void UpdateMaskingTexture();
+
+	void ShouldTessellate(bool Value);
 
 private:
 	void UpdateSelection(const XMVECTOR& PickingRayOrigin, const XMVECTOR& PickingRayDirection);
@@ -84,7 +86,7 @@ private:
 	void UpdateVertex(SVertex3D& Vertex, bool bIsLeftButton, float DeltaHeightFactor);
 
 public:
-	static constexpr int KTextureMaxCount{ 5 }; // It includes 1 main texture + 4 layer textures
+	static constexpr int KMaterialMaxCount{ 5 }; // It includes 1 main texture + 4 layer textures
 
 	static constexpr float KHeightUnit{ 0.01f };
 	static constexpr float KMaxHeight{ +5.0f };
@@ -122,13 +124,13 @@ private:
 	CGame*					m_PtrGame{};
 
 private:
-	unique_ptr<CObject2D>	m_Object2DMaskingTextureRepresentation{};
-	unique_ptr<CObject3D>	m_Object3D{};
-	XMFLOAT2				m_Size{};
-	unique_ptr<CTexture>	m_MaskingTexture{};
-	XMFLOAT2				m_MaskingTextureSize{};
-	vector<SPixelUNorm>		m_MaskingTextureRawData{};
-	XMMATRIX				m_MatrixMaskingSpace{};
+	unique_ptr<CObject2D>			m_Object2DMaskingTextureRepresentation{};
+	unique_ptr<CObject3D>			m_Object3D{};
+	XMFLOAT2						m_Size{};
+	unique_ptr<CMaterialTexture>	m_MaskingTexture{};
+	XMFLOAT2						m_MaskingTextureSize{};
+	vector<SPixelUNorm>				m_MaskingTextureRawData{};
+	XMMATRIX						m_MatrixMaskingSpace{};
 
 private:
 	float					m_SelectionHalfSize{ KSelectionMinSize / 2.0f };

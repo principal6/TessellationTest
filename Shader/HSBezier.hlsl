@@ -1,15 +1,28 @@
 #include "Header.hlsli"
 
+#define TESS 63.0f
+
 HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(InputPatch<VS_OUTPUT, 3> Patch, uint PatchID : SV_PrimitiveID)
 {
 	HS_CONSTANT_DATA_OUTPUT Output;
 
-	Output.EdgeTessFactor[0] = 3.0f;
-	Output.EdgeTessFactor[1] = 3.0f;
-	Output.EdgeTessFactor[2] = 3.0f;
+	Output.EdgeTessFactor[0] = TESS;
+	Output.EdgeTessFactor[1] = TESS;
+	Output.EdgeTessFactor[2] = TESS;
 
-	Output.InsideTessFactor = 3.0f;
+	Output.InsideTessFactor = TESS;
 
+	/*
+	if (all(Patch[0].WorldNormal == Patch[1].WorldNormal) && all(Patch[0].WorldNormal == Patch[2].WorldNormal))
+	{
+		Output.EdgeTessFactor[0] = 1.0f;
+		Output.EdgeTessFactor[1] = 1.0f;
+		Output.EdgeTessFactor[2] = 1.0f;
+
+		Output.InsideTessFactor = 1.0f;
+	}
+	*/
+	
 	return Output;
 }
 

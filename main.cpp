@@ -1,8 +1,17 @@
 #include <chrono>
 #include "Core/Game.h"
+#include "ImGui/imgui.h"
+#include "ImGui/imgui_impl_win32.h"
+#include "ImGui/imgui_impl_dx11.h"
 
 using std::chrono::steady_clock;
 
+static ImVec2 operator+(const ImVec2& a, const ImVec2& b)
+{
+	return ImVec2(a.x + b.x, a.y + b.y);
+}
+
+IMGUI_IMPL_API LRESULT  ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK WndProc(_In_ HWND hWnd, _In_ UINT Msg, _In_ WPARAM wParam, _In_ LPARAM lParam);
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nShowCmd)
@@ -11,40 +20,63 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 	char WorkingDirectory[MAX_PATH]{};
 	GetCurrentDirectoryA(MAX_PATH, WorkingDirectory);
-
+	
 	CGame Game{ hInstance, XMFLOAT2(800, 600) };
 	Game.CreateWin32(WndProc, TEXT("Game"), L"Asset\\dotumche_10_korean.spritefont", true);
-
+	
 	Game.SetAmbientlLight(XMFLOAT3(1, 1, 1), 0.2f);
 	Game.SetDirectionalLight(XMVectorSet(0, 1, 0, 0), XMVectorSet(1, 1, 1, 1));
 
-	Game.SetGameRenderingFlags(EFlagsGameRendering::UseLighting | EFlagsGameRendering::DrawMiniAxes);
+	Game.SetGameRenderingFlags(EFlagsGameRendering::UseLighting | EFlagsGameRendering::DrawMiniAxes | 
+		EFlagsGameRendering::UseTerrainSelector | EFlagsGameRendering::DrawTerrainMaskingTexture | EFlagsGameRendering::TessellateTerrain);
 
-	CCamera* MainCamera{ Game.AddCamera(SCameraData(ECameraType::FreeLook, XMVectorSet(0, 0, 0, 0), XMVectorSet(0, 0, +1.0f, 0))) };
+	CCamera* MainCamera{ Game.AddCamera(SCameraData(ECameraType::FreeLook, XMVectorSet(0, 0, 0, 0), XMVectorSet(0, 0, 1, 0))) };
+	MainCamera->SetPosition(XMVectorSet(0, 1, -2, 1));
 
-	CGameObject3D* goTri{ Game.AddGameObject3D("Tri") };
+	CGameObject3D* goTest{ Game.AddGameObject3D("Test") };
 	{
-		SMesh Mesh{ GenerateTriangle(XMVectorSet(0, 1, 0, 1), XMVectorSet(1, -1, 0, 1), XMVectorSet(-1, -1, 0, 1),
-			XMVectorSet(1, 0, 0, 1), XMVectorSet(0, 1, 0, 1), XMVectorSet(0, 0, 1, 1)) };
-		Mesh.vVertices[0].Normal = XMVector3Normalize(XMVectorSet(0, +1.0f, -1.0f, 0));
-		Mesh.vVertices[1].Normal = XMVector3Normalize(XMVectorSet(+1.0f, 0, -1.0f, 0));
-		Mesh.vVertices[2].Normal = XMVector3Normalize(XMVectorSet(-1.0f, 0, -1.0f, 0));
+		goTest->ComponentRender.PtrObject3D = Game.AddObject3D();
+		XMVECTOR V0{  0, +1, 0, 1 };
+		XMVECTOR V1{ +1, -1, 0, 1 };
+		XMVECTOR V2{ -1, -1, 0, 1 };
+		XMVECTOR C0{ 1, 0, 0, 1 };
+		XMVECTOR C1{ 0, 1, 0, 1 };
+		XMVECTOR C2{ 0, 0, 1, 1 };
 		
-		/*
-		SMesh Mesh{ GenerateCube(XMVectorSet(1, 0, 1, 1)) };
-		CalculateFaceNormals(Mesh);
-		CalculateVertexNormalsFromFaceNormals(Mesh);
-		*/
-
-		goTri->ComponentTransform.Translation = XMVectorSet(0, 0, 4.0f, 0);
-
-		goTri->ComponentRender.PtrObject3D = Game.AddObject3D();
-		goTri->ComponentRender.PtrObject3D->Create(Mesh);
-		goTri->ComponentRender.PtrObject3D->SetbUseTessellation(true);
-
-		goTri->ComponentRender.PtrPS = Game.GetBaseShader(EBaseShader::PSVertexColor);
+		SModel Model{};
+		SMesh Mesh{ GenerateSquareXZPlane() };
+		AverageNormals(Mesh);
+		CalculateTangents(Mesh);
+		AverageTangents(Mesh);
+		CMaterial Material{};
+		Material.SetDiffuseTextureFileName("Asset\\ground.png");
+		Material.SetNormalTextureFileName("Asset\\ground_normal.png");
+		Material.SetDisplacementTextureFileName("Asset\\ground_displacement.png");
+		Model.vMeshes.emplace_back(Mesh);
+		Model.vMaterials.emplace_back(Material);
+		goTest->ComponentRender.PtrObject3D->Create(Model);
+		goTest->ComponentRender.PtrObject3D->ShouldTessellate(true);
 	}
 
+	CMaterial MaterialDefaultGround{};
+	{
+		MaterialDefaultGround.SetName("DefaultGround");
+		MaterialDefaultGround.SetbShouldGenerateAutoMipMap(true);
+		MaterialDefaultGround.SetDiffuseTextureFileName("Asset\\ground.png");
+		MaterialDefaultGround.SetNormalTextureFileName("Asset\\ground_normal.png");
+		Game.AddMaterial(MaterialDefaultGround);
+	}
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGui_ImplWin32_Init(Game.GethWnd());
+	ImGui_ImplDX11_Init(Game.GetDevicePtr(), Game.GetDeviceContextPtr());
+
+	ImGuiIO& igIO{ ImGui::GetIO() };
+	igIO.Fonts->AddFontDefault();
+	ImFont* igFont{ igIO.Fonts->AddFontFromFileTTF("Asset/D2Coding.ttf", 16.0f, nullptr, igIO.Fonts->GetGlyphRangesKorean()) };
+	
 	while (true)
 	{
 		static MSG Msg{};
@@ -74,6 +106,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			static long long TimePrev{ TimeNow };
 			float DeltaTimeF{ (TimeNow - TimePrev) * 0.000'000'001f };
 
+			Game.BeginRendering(Colors::CornflowerBlue);
+
 			// Keyboard input
 			const Keyboard::State& KeyState{ Game.GetKeyState() };
 			if (KeyState.Escape)
@@ -82,19 +116,19 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			}
 			if (KeyState.W)
 			{
-				MainCamera->MoveCamera(ECameraMovementDirection::Forward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Forward, DeltaTimeF * 10.0f);
 			}
 			if (KeyState.S)
 			{
-				MainCamera->MoveCamera(ECameraMovementDirection::Backward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Backward, DeltaTimeF * 10.0f);
 			}
 			if (KeyState.A)
 			{
-				MainCamera->MoveCamera(ECameraMovementDirection::Leftward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Leftward, DeltaTimeF * 10.0f);
 			}
 			if (KeyState.D)
 			{
-				MainCamera->MoveCamera(ECameraMovementDirection::Rightward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Rightward, DeltaTimeF * 10.0f);
 			}
 			if (KeyState.D1)
 			{
@@ -126,25 +160,41 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			const Mouse::State& MouseState{ Game.GetMouseState() };
 			static int PrevMouseX{ MouseState.x };
 			static int PrevMouseY{ MouseState.y };
-			if (MouseState.leftButton)
+			if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
 			{
-				Game.Pick();
-			}
-			if (MouseState.x != PrevMouseX || MouseState.y != PrevMouseY)
-			{
-				if (MouseState.middleButton)
+				if (MouseState.leftButton)
 				{
-					MainCamera->RotateCamera(MouseState.x - PrevMouseX, MouseState.y - PrevMouseY, 0.01f);
+					Game.Pick();
 				}
+				if (MouseState.x != PrevMouseX || MouseState.y != PrevMouseY)
+				{
+					if (MouseState.middleButton)
+					{
+						MainCamera->Rotate(MouseState.x - PrevMouseX, MouseState.y - PrevMouseY, 0.01f);
+					}
 
-				PrevMouseX = MouseState.x;
-				PrevMouseY = MouseState.y;
+					PrevMouseX = MouseState.x;
+					PrevMouseY = MouseState.y;
+				}
 			}
-
-			Game.BeginRendering(Colors::CornflowerBlue);
 
 			Game.Animate();
 			Game.Draw(DeltaTimeF);
+
+			ImGui_ImplDX11_NewFrame();
+			ImGui_ImplWin32_NewFrame();
+			ImGui::NewFrame();
+
+			ImGui::PushFont(igFont);
+
+			{
+				
+			}
+
+			ImGui::PopFont();
+
+			ImGui::Render();
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 			Game.EndRendering();
 
@@ -155,11 +205,18 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 		}
 	}
 
+	ImGui_ImplDX11_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
+
 	return 0;
 }
 
 LRESULT CALLBACK WndProc(_In_ HWND hWnd, _In_ UINT Msg, _In_ WPARAM wParam, _In_ LPARAM lParam)
 {
+	if (ImGui_ImplWin32_WndProcHandler(hWnd, Msg, wParam, lParam))
+		return 0;
+
 	switch (Msg)
 	{
 	case WM_ACTIVATEAPP:

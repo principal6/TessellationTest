@@ -5,6 +5,14 @@ cbuffer cbSpace : register(b0)
 	float4x4 VP;
 }
 
+SamplerState CurrentSampler : register(s0);
+
+Texture2D Layer0DisplacementTexture : register(t0);
+Texture2D Layer1DisplacementTexture : register(t1);
+Texture2D Layer2DisplacementTexture : register(t2);
+Texture2D Layer3DisplacementTexture : register(t3);
+Texture2D Layer4DisplacementTexture : register(t4);
+
 float4 GetBezier(float4 P1, float4 P2, float4 P3, float4 N1, float4 N2, float4 N3, float3 uvw)
 {
 	float4 w12 = dot((P2 - P1), N1);
@@ -56,6 +64,10 @@ DS_OUTPUT main(HS_CONSTANT_DATA_OUTPUT TessFactors, float3 Domain : SV_DomainLoc
 {
 	DS_OUTPUT Output;
 
+	Output.bUseVertexColor = Patch[0].bUseVertexColor + Patch[1].bUseVertexColor + Patch[2].bUseVertexColor;
+	Output.Color = Patch[0].Color * Domain.x + Patch[1].Color * Domain.y + Patch[2].Color * Domain.z;
+	Output.UV = Patch[0].UV * Domain.x + Patch[1].UV * Domain.y + Patch[2].UV * Domain.z;
+
 	float4 P1 = Patch[0].WorldPosition;
 	float4 P2 = Patch[1].WorldPosition;
 	float4 P3 = Patch[2].WorldPosition;
@@ -64,14 +76,33 @@ DS_OUTPUT main(HS_CONSTANT_DATA_OUTPUT TessFactors, float3 Domain : SV_DomainLoc
 	float4 N2 = normalize(Patch[1].WorldNormal);
 	float4 N3 = normalize(Patch[2].WorldNormal);
 
-	Output.Position = Output.WorldPosition = GetBezier(P1, P2, P3, N1, N2, N3, Domain);
-	Output.Position = mul(float4(Output.Position.xyz, 1), VP);
+	float4 Displacement = Layer0DisplacementTexture.Gather(CurrentSampler, Output.UV.xy);
+	if (Domain.x == 1.0f || Domain.y == 1.0f || Domain.z == 1.0f)
+	{
+		
+	}
+	else
+	{
+		P1 += N1 * Displacement.x * 0.1f;
+		P2 += N2 * Displacement.y * 0.1f;
+		P3 += N3 * Displacement.z * 0.1f;
+	}
 
-	Output.Color = Patch[0].Color * Domain.x + Patch[1].Color * Domain.y + Patch[2].Color * Domain.z;
-	Output.UV = Patch[0].UV * Domain.x + Patch[1].UV * Domain.y + Patch[2].UV * Domain.z;
-	
+	Output.Position = Output.WorldPosition = GetBezier(P1, P2, P3, N1, N2, N3, Domain);
+
+	if (Output.bUseVertexColor == 0)
+	{
+		Output.Position = mul(float4(Output.Position.xyz, 1), VP);
+	}
+
 	Output.WorldNormal = Patch[0].WorldNormal * Domain.x + Patch[1].WorldNormal * Domain.y + Patch[2].WorldNormal * Domain.z;
-	Output.WVPNormal = Patch[0].WVPNormal * Domain.x + Patch[1].WVPNormal * Domain.y + Patch[2].WVPNormal * Domain.z;
+	Output.WorldNormal = normalize(Output.WorldNormal);
+
+	Output.WorldTangent = Patch[0].WorldTangent * Domain.x + Patch[1].WorldTangent * Domain.y + Patch[2].WorldTangent * Domain.z;
+	Output.WorldTangent = normalize(Output.WorldTangent);
+
+	Output.WorldBitangent = Patch[0].WorldBitangent * Domain.x + Patch[1].WorldBitangent * Domain.y + Patch[2].WorldBitangent * Domain.z;
+	Output.WorldBitangent = normalize(Output.WorldBitangent);
 
 	return Output;
 }

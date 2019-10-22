@@ -9,11 +9,13 @@ static const XMVECTOR KColorWhite{ XMVectorSet(1, 1, 1 ,1) };
 static const XMMATRIX KMatrixIdentity{ XMMatrixIdentity() };
 
 static string ConvertXMVECTORToString(const XMVECTOR& Vector);
-static void CalculateVertexNormalsFromFaceNormals(SMesh& Object3DData);
-static void CalculateFaceNormals(SMesh& Object3DData);
+static void CalculateNormals(SMesh& Mesh);
+static void AverageNormals(SMesh& Mesh);
+static void CalculateTangents(SMesh& Mesh);
 static vector<STriangle> GenerateContinuousQuads(int QuadCount);
-static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color0, const XMVECTOR& Color1, const XMVECTOR& Color2);
 static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color = KColorWhite);
+static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color0, const XMVECTOR& Color1, const XMVECTOR& Color2);
+static SMesh GenerateSquareXYPlane(const XMVECTOR& Color = KColorWhite);
 static SMesh GenerateSquareXZPlane(const XMVECTOR& Color = KColorWhite);
 static SMesh GenerateSquareYZPlane(const XMVECTOR& Color = KColorWhite);
 static SMesh GenerateTerrainBase(const XMFLOAT2& Size);
@@ -49,39 +51,56 @@ static string ConvertXMVECTORToString(const XMVECTOR& Vector)
 	return Result;
 }
 
-static void CalculateVertexNormalsFromFaceNormals(SMesh& Object3DData)
+static void CalculateNormals(SMesh& Mesh)
+{
+	for (const STriangle& Triangle : Mesh.vTriangles)
+	{
+		SVertex3D& V0{ Mesh.vVertices[Triangle.I0] };
+		SVertex3D& V1{ Mesh.vVertices[Triangle.I1] };
+		SVertex3D& V2{ Mesh.vVertices[Triangle.I2] };
+
+		XMVECTOR Edge01{ V1.Position - V0.Position };
+		XMVECTOR Edge02{ V2.Position - V0.Position };
+
+		XMVECTOR Normal{ XMVector3Normalize(XMVector3Cross(Edge01, Edge02)) };
+
+		V0.Normal = V1.Normal = V2.Normal = Normal;
+	}
+}
+
+static void AverageNormals(SMesh& Mesh)
 {
 	std::unordered_map<string, vector<XMVECTOR>> mapVertexToNormals{};
-	for (const STriangle& Triangle : Object3DData.vTriangles)
+	for (const STriangle& Triangle : Mesh.vTriangles)
 	{
-		const SVertex3D& V0{ Object3DData.vVertices[Triangle.I0] };
-		const SVertex3D& V1{ Object3DData.vVertices[Triangle.I1] };
-		const SVertex3D& V2{ Object3DData.vVertices[Triangle.I2] };
+		const SVertex3D& V0{ Mesh.vVertices[Triangle.I0] };
+		const SVertex3D& V1{ Mesh.vVertices[Triangle.I1] };
+		const SVertex3D& V2{ Mesh.vVertices[Triangle.I2] };
 
-		string V0Str{ ConvertXMVECTORToString(V0.Position) };
-		string V1Str{ ConvertXMVECTORToString(V1.Position) };
-		string V2Str{ ConvertXMVECTORToString(V2.Position) };
+		string V0PositionStr{ ConvertXMVECTORToString(V0.Position) };
+		string V1PositionStr{ ConvertXMVECTORToString(V1.Position) };
+		string V2PositionStr{ ConvertXMVECTORToString(V2.Position) };
 
-		const vector<XMVECTOR>& vV0s{ mapVertexToNormals[V0Str] };
+		const vector<XMVECTOR>& vV0Normals{ mapVertexToNormals[V0PositionStr] };
 		{
-			auto found{ std::find(vV0s.begin(), vV0s.end(), V0.Normal) };
-			if (found == vV0s.end()) mapVertexToNormals[V0Str].emplace_back(V0.Normal);
+			auto found{ std::find(vV0Normals.begin(), vV0Normals.end(), V0.Normal) };
+			if (found == vV0Normals.end()) mapVertexToNormals[V0PositionStr].emplace_back(V0.Normal);
 		}
-		
-		const vector<XMVECTOR>& vV1s{ mapVertexToNormals[V1Str] };
+
+		const vector<XMVECTOR>& vV1Normals{ mapVertexToNormals[V1PositionStr] };
 		{
-			auto found{ std::find(vV1s.begin(), vV1s.end(), V1.Normal) };
-			if (found == vV1s.end()) mapVertexToNormals[V1Str].emplace_back(V1.Normal);
+			auto found{ std::find(vV1Normals.begin(), vV1Normals.end(), V1.Normal) };
+			if (found == vV1Normals.end()) mapVertexToNormals[V1PositionStr].emplace_back(V1.Normal);
 		}
-		
-		const vector<XMVECTOR>& vV2s{ mapVertexToNormals[V2Str] };
+
+		const vector<XMVECTOR>& vV2Normals{ mapVertexToNormals[V2PositionStr] };
 		{
-			auto found{ std::find(vV2s.begin(), vV2s.end(), V2.Normal) };
-			if (found == vV2s.end()) mapVertexToNormals[V2Str].emplace_back(V2.Normal);
+			auto found{ std::find(vV2Normals.begin(), vV2Normals.end(), V2.Normal) };
+			if (found == vV2Normals.end()) mapVertexToNormals[V2PositionStr].emplace_back(V2.Normal);
 		}
 	}
 
-	for (SVertex3D& Vertex : Object3DData.vVertices)
+	for (SVertex3D& Vertex : Mesh.vVertices)
 	{
 		string VStr{ ConvertXMVECTORToString(Vertex.Position) };
 
@@ -98,20 +117,89 @@ static void CalculateVertexNormalsFromFaceNormals(SMesh& Object3DData)
 	}
 }
 
-static void CalculateFaceNormals(SMesh& Object3DData)
+static void CalculateTangents(SMesh& Mesh)
 {
-	for (const STriangle& Triangle : Object3DData.vTriangles)
+	for (STriangle& Triangle : Mesh.vTriangles)
 	{
-		SVertex3D& V0{ Object3DData.vVertices[Triangle.I0] };
-		SVertex3D& V1{ Object3DData.vVertices[Triangle.I1] };
-		SVertex3D& V2{ Object3DData.vVertices[Triangle.I2] };
+		SVertex3D& Vert0{ Mesh.vVertices[Triangle.I0] };
+		SVertex3D& Vert1{ Mesh.vVertices[Triangle.I1] };
+		SVertex3D& Vert2{ Mesh.vVertices[Triangle.I2] };
 
-		XMVECTOR Edge01{ V1.Position - V0.Position };
-		XMVECTOR Edge02{ V2.Position - V0.Position };
+		XMVECTOR Edge01{ Vert1.Position - Vert0.Position };
+		XMVECTOR Edge02{ Vert2.Position - Vert0.Position };
 
-		XMVECTOR Normal{ XMVector3Normalize(XMVector3Cross(Edge01, Edge02)) };
+		XMVECTOR UV01{ Vert1.TexCoord - Vert0.TexCoord };
+		XMVECTOR UV02{ Vert2.TexCoord - Vert0.TexCoord };
 
-		V0.Normal = V1.Normal = V2.Normal = Normal;
+		float U01{ XMVectorGetX(UV01) };
+		float V01{ XMVectorGetY(UV01) };
+
+		float U02{ XMVectorGetX(UV02) };
+		float V02{ XMVectorGetY(UV02) };
+
+		// Edge01 = U01 * Tangent + V01 * Bitangent
+		// Edge02 = U02 * Tangent + V02 * Bitangent
+
+		// | Edge01 x y z | = | U01 V01 | * | Tangent	x y z |
+		// | Edge02 x y z |   | U02 V02 |   | Bitangent	x y z |
+
+		// ( Determinant == U01 * V02 - V01 * U02 )
+
+		//       1		  *  |  V02 -V01 | * | Edge01 x y z | = | Tangent	x y z |
+		//	Determinant		 | -U02  U01 | * | Edge02 x y z | = | Bitangent	x y z |
+
+		float InverseDeterminant{ 1 / (U01 * V02 - V01 * U02) };
+		Vert2.Tangent = Vert1.Tangent = Vert0.Tangent = XMVector3Normalize(InverseDeterminant * V02 * Edge01 - V01 * Edge02);
+		//Vert2.Bitangent = Vert1.Bitangent = Vert0.Bitangent = XMVector3Normalize(InverseDeterminant * -U02 * Edge01 + U01 * Edge02);
+	}
+}
+
+static void AverageTangents(SMesh& Mesh)
+{
+	std::unordered_map<string, vector<XMVECTOR>> mapVertexToTangents{};
+	for (const STriangle& Triangle : Mesh.vTriangles)
+	{
+		const SVertex3D& V0{ Mesh.vVertices[Triangle.I0] };
+		const SVertex3D& V1{ Mesh.vVertices[Triangle.I1] };
+		const SVertex3D& V2{ Mesh.vVertices[Triangle.I2] };
+
+		string V0PositionStr{ ConvertXMVECTORToString(V0.Position) };
+		string V1PositionStr{ ConvertXMVECTORToString(V1.Position) };
+		string V2PositionStr{ ConvertXMVECTORToString(V2.Position) };
+
+		const vector<XMVECTOR>& vV0Tangents{ mapVertexToTangents[V0PositionStr] };
+		{
+			auto found{ std::find(vV0Tangents.begin(), vV0Tangents.end(), V0.Tangent) };
+			if (found == vV0Tangents.end()) mapVertexToTangents[V0PositionStr].emplace_back(V0.Tangent);
+		}
+
+		const vector<XMVECTOR>& vV1Tangents{ mapVertexToTangents[V1PositionStr] };
+		{
+			auto found{ std::find(vV1Tangents.begin(), vV1Tangents.end(), V1.Tangent) };
+			if (found == vV1Tangents.end()) mapVertexToTangents[V1PositionStr].emplace_back(V1.Tangent);
+		}
+
+		const vector<XMVECTOR>& vV2Tangents{ mapVertexToTangents[V2PositionStr] };
+		{
+			auto found{ std::find(vV2Tangents.begin(), vV2Tangents.end(), V2.Tangent) };
+			if (found == vV2Tangents.end()) mapVertexToTangents[V2PositionStr].emplace_back(V2.Tangent);
+		}
+	}
+
+	for (SVertex3D& Vertex : Mesh.vVertices)
+	{
+		string VStr{ ConvertXMVECTORToString(Vertex.Position) };
+
+		const vector<XMVECTOR>& vTangents{ mapVertexToTangents[VStr] };
+
+		XMVECTOR TangentSum{};
+		for (const auto& Tangent : vTangents)
+		{
+			TangentSum += Tangent;
+		}
+		XMVECTOR TriangleTangent{ TangentSum / (float)vTangents.size() };
+
+		Vertex.Tangent = TriangleTangent;
 	}
 }
 
@@ -128,26 +216,47 @@ static vector<STriangle> GenerateContinuousQuads(int QuadCount)
 	return vTriangles;
 }
 
+static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color)
+{
+	return GenerateTriangle(V0, V1, V2, Color, Color, Color);
+}
+
 static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color0, const XMVECTOR& Color1, const XMVECTOR& Color2)
 {
 	SMesh Mesh{};
 
-	Mesh.vVertices.emplace_back(V0, Color0);
-	Mesh.vVertices.emplace_back(V1, Color1);
-	Mesh.vVertices.emplace_back(V2, Color2);
+	Mesh.vVertices.emplace_back(V0, Color0, XMVectorSet(0.5f, 0.0f, 0, 0));
+	Mesh.vVertices.emplace_back(V1, Color1, XMVectorSet(1.0f, 1.0f, 0, 0));
+	Mesh.vVertices.emplace_back(V2, Color2, XMVectorSet(0.0f, 1.0f, 0, 0));
 
 	Mesh.vTriangles.emplace_back(0, 1, 2);
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
 
-static SMesh GenerateTriangle(const XMVECTOR& V0, const XMVECTOR& V1, const XMVECTOR& V2, const XMVECTOR& Color)
+static SMesh GenerateSquareXYPlane(const XMVECTOR& Color)
 {
-	return GenerateTriangle(V0, V1, V2, Color, Color, Color);
+	constexpr float KHalfLengthX{ 0.5f };
+	constexpr float KHalfLengthY{ 0.5f };
+
+	SMesh Mesh{};
+
+	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, +KHalfLengthY, 0.0f, 1), Color, XMVectorSet(0, 0, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, +KHalfLengthY, 0.0f, 1), Color, XMVectorSet(1, 0, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, -KHalfLengthY, 0.0f, 1), Color, XMVectorSet(0, 1, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, -KHalfLengthY, 0.0f, 1), Color, XMVectorSet(1, 1, 0, 0));
+
+	Mesh.vTriangles = GenerateContinuousQuads(1);
+
+	CalculateNormals(Mesh);
+
+	AverageNormals(Mesh);
+
+	return Mesh;
 }
 
 static SMesh GenerateSquareXZPlane(const XMVECTOR& Color)
@@ -157,16 +266,16 @@ static SMesh GenerateSquareXZPlane(const XMVECTOR& Color)
 	
 	SMesh Mesh{};
 
-	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, +0.0f, +KHalfLengthZ, 1), Color, XMVectorSet(0, 0, 0, 0));
-	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, +0.0f, +KHalfLengthZ, 1), Color, XMVectorSet(1, 0, 0, 0));
-	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, +0.0f, -KHalfLengthZ, 1), Color, XMVectorSet(0, 1, 0, 0));
-	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, +0.0f, -KHalfLengthZ, 1), Color, XMVectorSet(1, 1, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, 0.0f, +KHalfLengthZ, 1), Color, XMVectorSet(0, 0, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, 0.0f, +KHalfLengthZ, 1), Color, XMVectorSet(1, 0, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(-KHalfLengthX, 0.0f, -KHalfLengthZ, 1), Color, XMVectorSet(0, 1, 0, 0));
+	Mesh.vVertices.emplace_back(XMVectorSet(+KHalfLengthX, 0.0f, -KHalfLengthZ, 1), Color, XMVectorSet(1, 1, 0, 0));
 
 	Mesh.vTriangles = GenerateContinuousQuads(1);
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -185,9 +294,9 @@ static SMesh GenerateSquareYZPlane(const XMVECTOR& Color)
 
 	Mesh.vTriangles = GenerateContinuousQuads(1);
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -213,9 +322,11 @@ static SMesh GenerateTerrainBase(const XMFLOAT2& Size)
 
 	Mesh.vTriangles = GenerateContinuousQuads(SizeX * SizeZ);
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
+
+	CalculateTangents(Mesh);
 
 	TranslateMesh(Mesh, XMVectorSet(static_cast<float>(-SizeX / 2), 0, static_cast<float>(SizeZ / 2), 1));
 
@@ -251,9 +362,9 @@ static SMesh GenerateCircleXZPlane(uint32_t SideCount, const XMVECTOR& Color)
 		Mesh.vTriangles.emplace_back(iSide * 3 + 0, iSide * 3 + 1, iSide * 3 + 2);
 	}
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -302,9 +413,9 @@ static SMesh GeneratePyramid(const XMVECTOR& Color)
 		Mesh.vTriangles.emplace_back(13, 15, 14);
 	}
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -356,9 +467,9 @@ static SMesh GenerateCube(const XMVECTOR& Color)
 
 	Mesh.vTriangles = GenerateContinuousQuads(6);
 	
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -406,9 +517,9 @@ static SMesh GenerateCone(float RadiusRatio, float Radius, float Height, uint32_
 		Mesh.vTriangles.emplace_back(iSide * 6 + 1, iSide * 6 + 4, iSide * 6 + 2);
 	}
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -474,9 +585,9 @@ static SMesh GenerateSphere(uint32_t SegmentCount, const XMVECTOR& ColorTop, con
 		Mesh.vTriangles.emplace_back(iSide * 6 + 3, iSide * 6 + 4, iSide * 6 + 5);
 	}
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
@@ -541,9 +652,9 @@ static SMesh GenerateTorus(const XMVECTOR& Color, float InnerRadius, uint32_t Si
 		}
 	}
 
-	CalculateFaceNormals(Mesh);
+	CalculateNormals(Mesh);
 
-	CalculateVertexNormalsFromFaceNormals(Mesh);
+	AverageNormals(Mesh);
 
 	return Mesh;
 }
