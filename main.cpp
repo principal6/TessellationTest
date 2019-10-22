@@ -44,11 +44,12 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 		XMVECTOR C2{ 0, 0, 1, 1 };
 		
 		SModel Model{};
-		SMesh Mesh{ GenerateSquareXZPlane() };
+		SMesh Mesh{ GenerateTerrainBase(XMFLOAT2(10, 10)) };
 		AverageNormals(Mesh);
 		CalculateTangents(Mesh);
 		AverageTangents(Mesh);
 		CMaterial Material{};
+		Material.SetbShouldGenerateAutoMipMap(true);
 		Material.SetDiffuseTextureFileName("Asset\\ground.png");
 		Material.SetNormalTextureFileName("Asset\\ground_normal.png");
 		Material.SetDisplacementTextureFileName("Asset\\ground_displacement.png");
@@ -116,19 +117,19 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			}
 			if (KeyState.W)
 			{
-				MainCamera->Move(ECameraMovementDirection::Forward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Forward, DeltaTimeF * 1.0f);
 			}
 			if (KeyState.S)
 			{
-				MainCamera->Move(ECameraMovementDirection::Backward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Backward, DeltaTimeF * 1.0f);
 			}
 			if (KeyState.A)
 			{
-				MainCamera->Move(ECameraMovementDirection::Leftward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Leftward, DeltaTimeF * 1.0f);
 			}
 			if (KeyState.D)
 			{
-				MainCamera->Move(ECameraMovementDirection::Rightward, DeltaTimeF * 10.0f);
+				MainCamera->Move(ECameraMovementDirection::Rightward, DeltaTimeF * 1.0f);
 			}
 			if (KeyState.D1)
 			{
