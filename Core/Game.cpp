@@ -511,6 +511,15 @@ void CGame::CreateBaseShaders()
 
 	m_HSBezier = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_HSBezier->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main");
+	m_HSBezier->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
+
+	m_HSBezierEven = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSBezierEven->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main_even");
+	m_HSBezierEven->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
+
+	m_HSBezierInteger = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSBezierInteger->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main_integer");
+	m_HSBezierInteger->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
 
 	m_DSBezier = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_DSBezier->Create(EShaderType::DomainShader, L"Shader\\DSBezier.hlsl", "main");
@@ -1369,9 +1378,27 @@ void CGame::DrawGameObject3D(CGameObject3D* PtrGO)
 
 	if (PtrGO->ComponentRender.PtrObject3D->ShouldTessellate())
 	{
-		m_HSBezier->Use();
+		CShader* HS{};
+		switch (m_eTessellationMode)
+		{
+		case ETessellationMode::FractionalOdd:
+			HS = m_HSBezier.get();
+			break;
+		case ETessellationMode::FractionalEven:
+			HS = m_HSBezierEven.get();
+			break;
+		case ETessellationMode::Integer:
+			HS = m_HSBezierInteger.get();
+			break;
+		default:
+			break;
+		}
+		
+		HS->Use();
+		m_cbHSTessFactorData.TessFactor = m_TessFactor;
+		HS->UpdateConstantBuffer(0);
+		
 		m_DSBezier->Use();
-
 		m_cbDSSpaceData.VP = GetTransposedVPMatrix();
 		m_DSBezier->UpdateConstantBuffer(0);
 	}
@@ -1634,8 +1661,10 @@ void CGame::DrawTerrain()
 	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::TessellateTerrain))
 	{
 		m_HSBezier->Use();
-		m_DSBezier->Use();
+		m_cbHSTessFactorData.TessFactor = m_TessFactor;
+		m_HSBezier->UpdateConstantBuffer(0);
 
+		m_DSBezier->Use();
 		m_cbDSSpaceData.VP = GetTransposedVPMatrix();
 		m_DSBezier->UpdateConstantBuffer(0);
 
@@ -2143,4 +2172,24 @@ float CGame::GetSkyTime()
 XMMATRIX CGame::GetTransposedVPMatrix()
 {
 	return XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+}
+
+void CGame::SetTessFactor(float Value)
+{
+	m_TessFactor = Value;
+}
+
+float CGame::GetTessFactor() const
+{
+	return m_TessFactor;
+}
+
+void CGame::SetTessellationMode(ETessellationMode eMode)
+{
+	m_eTessellationMode = eMode;
+}
+
+ETessellationMode CGame::GetTessellationMode() const
+{
+	return m_eTessellationMode;
 }

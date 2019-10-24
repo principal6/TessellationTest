@@ -17,6 +17,13 @@
 #include "TinyXml2/tinyxml2.h"
 #include "Terrain.h"
 
+enum class ETessellationMode
+{
+	FractionalOdd,
+	FractionalEven,
+	Integer
+};
+
 enum class EFlagsGameRendering
 {
 	None						= 0x000,
@@ -43,6 +50,8 @@ enum class EBaseShader
 	VSBase2D,
 
 	HSBezier,
+	HSBezierEven,
+	HSBezierInteger,
 	DSBezier,
 
 	GSNormal,
@@ -117,6 +126,12 @@ struct SCBVSSpaceData
 struct SCBVSAnimationBonesData
 {
 	XMMATRIX	BoneMatrices[KMaxBoneMatrixCount]{};
+};
+
+struct SCBHSTessFectorData
+{
+	float TessFactor{};
+	float Pads[3]{};
 };
 
 struct SCBDSSpaceData
@@ -333,6 +348,12 @@ public:
 	float GetSkyTime();
 	XMMATRIX GetTransposedVPMatrix();
 
+public:
+	void SetTessFactor(float Value);
+	float GetTessFactor() const;
+	void SetTessellationMode(ETessellationMode eMode);
+	ETessellationMode GetTessellationMode() const;
+
 private:
 	void UpdateGameObject3D(CGameObject3D* PtrGO);
 	void DrawGameObject3D(CGameObject3D* PtrGO);
@@ -403,6 +424,9 @@ private:
 	unique_ptr<CShader>	m_VSBase2D{};
 
 	unique_ptr<CShader>	m_HSBezier{};
+	unique_ptr<CShader>	m_HSBezierEven{};
+	unique_ptr<CShader>	m_HSBezierInteger{};
+
 	unique_ptr<CShader>	m_DSBezier{};
 
 	unique_ptr<CShader>	m_GSNormal{};
@@ -420,6 +444,8 @@ private:
 	SCBVSSpaceData				m_cbVSSpaceData{};
 	SCBVSAnimationBonesData		m_cbVSAnimationBonesData{};
 	SCBVS2DSpaceData			m_cbVS2DSpaceData{};
+
+	SCBHSTessFectorData			m_cbHSTessFactorData{};
 
 	SCBDSSpaceData				m_cbDSSpaceData{};
 
@@ -526,6 +552,8 @@ private:
 
 private:
 	unique_ptr<CTerrain>	m_Terrain{};
+	float					m_TessFactor{ 64.0f };
+	ETessellationMode		m_eTessellationMode{};
 
 private:
 	ERasterizerState	m_eRasterizerState{ ERasterizerState::CullCounterClockwise };

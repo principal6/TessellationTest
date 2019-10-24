@@ -189,7 +189,38 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			ImGui::PushFont(igFont);
 
 			{
-				
+				bool bShowTessellationEditor{ true };
+				if (ImGui::Begin(u8"Å×¼¿·¹ÀÌ¼Ç(Tessellation)", &bShowTessellationEditor, ImGuiWindowFlags_AlwaysAutoResize))
+				{
+					float TessFactor{ Game.GetTessFactor() };
+					if (ImGui::DragFloat(u8"Tess factor", &TessFactor, 0.1f, 0.0f, 64.0f, "%.1f"))
+					{
+						Game.SetTessFactor(TessFactor);
+					}
+
+					ImGui::Separator();
+
+					static bool bRadio[3]{ true, false, false };
+					if (ImGui::RadioButton(u8"Fractional Odd", bRadio[0]))
+					{
+						Game.SetTessellationMode(ETessellationMode::FractionalOdd);
+						bRadio[0] = true;
+						bRadio[1] = bRadio[2] = false;
+					}
+					if (ImGui::RadioButton(u8"Fractional Even", bRadio[1]))
+					{
+						Game.SetTessellationMode(ETessellationMode::FractionalEven);
+						bRadio[1] = true;
+						bRadio[0] = bRadio[2] = false;
+					}
+					if (ImGui::RadioButton(u8"Integer", bRadio[2]))
+					{
+						Game.SetTessellationMode(ETessellationMode::Integer);
+						bRadio[2] = true;
+						bRadio[0] = bRadio[1] = false;
+					}
+				}
+				ImGui::End();
 			}
 
 			ImGui::PopFont();

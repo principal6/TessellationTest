@@ -79,11 +79,12 @@ DS_OUTPUT main(HS_CONSTANT_DATA_OUTPUT TessFactors, float3 Domain : SV_DomainLoc
 	float4 Displacement = Layer0DisplacementTexture.Gather(CurrentSampler, Output.UV.xy);
 	if (Domain.x != 0 && Domain.y != 0 && Domain.z != 0)
 	{
-		P1 += N1 * Displacement.x * 0.03f;
-		P2 += N2 * Displacement.y * 0.03f;
-		P3 += N3 * Displacement.z * 0.03f;
+		P1 += N1 * Displacement.x * 0.04f;
+		P2 += N2 * Displacement.y * 0.04f;
+		P3 += N3 * Displacement.z * 0.04f;
 	}
-	
+
+	//Output.Position = Output.WorldPosition = P1 * Domain.x + P2 * Domain.y + P3 * Domain.z;
 	Output.Position = Output.WorldPosition = GetBezier(P1, P2, P3, N1, N2, N3, Domain);
 
 	if (Output.bUseVertexColor == 0)
