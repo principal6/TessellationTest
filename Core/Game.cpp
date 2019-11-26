@@ -1,4 +1,19 @@
+#include <thread>
+
 #include "Game.h"
+#include "Core/FileDialog.h"
+
+using std::max;
+using std::min;
+using std::vector;
+using std::string;
+using std::wstring;
+using std::thread;
+using std::chrono::steady_clock;
+using std::to_string;
+using std::stof;
+using std::make_unique;
+using std::swap;
 
 static constexpr D3D11_INPUT_ELEMENT_DESC KBaseInputElementDescs[]
 {
@@ -7,390 +22,174 @@ static constexpr D3D11_INPUT_ELEMENT_DESC KBaseInputElementDescs[]
 	{ "TEXCOORD"	, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	{ "NORMAL"		, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0, 48, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	{ "TANGENT"		, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0, 64, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-
-	{ "BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT	, 1,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "BLENDWEIGHT"	, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 1, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 };
 
-static constexpr D3D11_INPUT_ELEMENT_DESC KVSLineInputElementDescs[]
+// FOR DEBUGGING SHADER...
+static constexpr D3D11_INPUT_ELEMENT_DESC KScreenQuadInputElementDescs[]
 {
 	{ "POSITION"	, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR"		, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "TEXCOORD"	, 0, DXGI_FORMAT_R32G32B32_FLOAT	, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 };
 
-static constexpr D3D11_INPUT_ELEMENT_DESC KVS2DBaseInputLayout[]
+void CGame::CreateWin32(WNDPROC const WndProc, const std::string& WindowName, bool bWindowed)
 {
-	{ "POSITION"	, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR"		, 0, DXGI_FORMAT_R32G32B32A32_FLOAT	, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "TEXCOORD"	, 0, DXGI_FORMAT_R32G32_FLOAT		, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-};
+	GetCurrentDirectoryA(MAX_PATH, m_WorkingDirectory);
 
-void CGame::CreateWin32(WNDPROC WndProc, LPCTSTR WindowName, const wstring& FontFileName, bool bWindowed)
-{
 	CreateWin32Window(WndProc, WindowName);
 
-	InitializeDirectX(FontFileName, bWindowed);
+	InitializeDirectX(bWindowed);
+
+	InitializeEditorAssets();
+
+	InitializeImGui("Asset\\D2Coding.ttf", 15.0f);
+}
+
+void CGame::CreateSpriteFont(const wstring& FontFileName)
+{
+	if (!m_Device)
+	{
+		MB_WARN("아직 Device가 생성되지 않았습니다", "SpriteFont 생성 실패");
+		return;
+	}
+
+	m_SpriteBatch = make_unique<SpriteBatch>(m_DeviceContext.Get());
+	m_SpriteFont = make_unique<SpriteFont>(m_Device.Get(), FontFileName.c_str());
 }
 
 void CGame::Destroy()
 {
 	DestroyWindow(m_hWnd);
+
+	ImGui_ImplDX11_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
+
+	m_IsDestroyed = true;
 }
 
-void CGame::SetPerspective(float FOV, float NearZ, float FarZ)
+void CGame::CreateWin32Window(WNDPROC const WndProc, const std::string& WindowName)
 {
-	m_NearZ = NearZ;
-	m_FarZ = FarZ;
+	if (m_hWnd) return;
 
-	m_MatrixProjection = XMMatrixPerspectiveFovLH(FOV, m_WindowSize.x / m_WindowSize.y, m_NearZ, m_FarZ);
-}
-
-void CGame::SetGameRenderingFlags(EFlagsGameRendering Flags)
-{
-	m_eFlagsGameRendering = Flags;
-}
-
-void CGame::ToggleGameRenderingFlags(EFlagsGameRendering Flags)
-{
-	m_eFlagsGameRendering ^= Flags;
-}
-
-void CGame::Set3DGizmoMode(E3DGizmoMode Mode)
-{
-	m_e3DGizmoMode = Mode;
-}
-
-void CGame::UpdatePSBase2DFlagOn(EFlagPSBase2D Flag)
-{
-	switch (Flag)
-	{
-	case EFlagPSBase2D::UseTexture:
-		m_cbPS2DFlagsData.bUseTexture = TRUE;
-		break;
-	default:
-		break;
-	}
-	m_PSBase2D->UpdateConstantBuffer(0);
-}
-
-void CGame::UpdatePSBase2DFlagOff(EFlagPSBase2D Flag)
-{
-	switch (Flag)
-	{
-	case EFlagPSBase2D::UseTexture:
-		m_cbPS2DFlagsData.bUseTexture = FALSE;
-		break;
-	default:
-		break;
-	}
-	m_PSBase2D->UpdateConstantBuffer(0);
-}
-
-void CGame::UpdateVSSpace(const XMMATRIX& World)
-{
-	m_cbVSSpaceData.World = XMMatrixTranspose(World);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(World * m_MatrixView * m_MatrixProjection);
-}
-
-void CGame::UpdateVS2DSpace(const XMMATRIX& World)
-{
-	m_cbVS2DSpaceData.World = XMMatrixTranspose(World);
-	m_cbVS2DSpaceData.Projection = XMMatrixTranspose(m_MatrixProjection2D);
-}
-
-void CGame::UpdateVSBaseMaterial(const CMaterial& Material)
-{
-	m_cbPSBaseMaterialData.MaterialAmbient = Material.GetAmbientColor();
-	m_cbPSBaseMaterialData.MaterialDiffuse = Material.GetDiffuseColor();
-	m_cbPSBaseMaterialData.MaterialSpecular = Material.GetSpecularColor();
-	m_cbPSBaseMaterialData.SpecularExponent = Material.GetSpecularExponent();
-	m_cbPSBaseMaterialData.SpecularIntensity = Material.GetSpecularIntensity();
-	m_cbPSBaseMaterialData.bHasTexture = Material.HasTexture();
-
-	m_PSBase->UpdateConstantBuffer(2);
-}
-
-void CGame::UpdateVSAnimationBoneMatrices(const XMMATRIX* BoneMatrices)
-{
-	memcpy(m_cbVSAnimationBonesData.BoneMatrices, BoneMatrices, sizeof(SCBVSAnimationBonesData));
-	m_VSAnimation->UpdateConstantBuffer(1);
-}
-
-void CGame::UpdateGSSpace()
-{
-	m_cbGSSpaceData.VP = GetTransposedVPMatrix();
-	m_GSNormal->UpdateConstantBuffer(0);
-}
-
-void CGame::UpdatePSTerrainSpace(const XMMATRIX& Matrix)
-{
-	m_cbPSTerrainSpaceData.Matrix = XMMatrixTranspose(Matrix);
-	m_PSTerrain->UpdateConstantBuffer(0);
-}
-
-void CGame::SetSky(const string& SkyDataFileName, float ScalingFactor)
-{
-	using namespace tinyxml2;
-
-	size_t Point{ SkyDataFileName.find_last_of('.') };
-	string Extension{ SkyDataFileName.substr(Point + 1) };
-	for (auto& c : Extension)
-	{
-		c = toupper(c);
-	}
-	assert(Extension == "XML");
-	
-	tinyxml2::XMLDocument xmlDocument{};
-	assert(xmlDocument.LoadFile(SkyDataFileName.c_str()) == XML_SUCCESS);
-	
-	XMLElement* xmlRoot{ xmlDocument.FirstChildElement() };
-	XMLElement* xmlTexture{ xmlRoot->FirstChildElement() };
-	m_SkyData.TextureFileName = xmlTexture->GetText();
-
-	XMLElement* xmlSun{ xmlTexture->NextSiblingElement() };
-	{
-		LoadSkyObjectData(xmlSun, m_SkyData.Sun);
-	}
-
-	XMLElement* xmlMoon{ xmlSun->NextSiblingElement() };
-	{
-		LoadSkyObjectData(xmlMoon, m_SkyData.Moon);
-	}
-
-	XMLElement* xmlCloud{ xmlMoon->NextSiblingElement() };
-	{
-		LoadSkyObjectData(xmlCloud, m_SkyData.Cloud);
-	}
-
-	m_SkyMaterial.SetDiffuseTextureFileName(m_SkyData.TextureFileName);
-
-	m_Object3DSkySphere = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Object3DSkySphere->Create(GenerateSphere(KSkySphereSegmentCount, KSkySphereColorUp, KSkySphereColorBottom), m_SkyMaterial);
-
-	m_Object3DSun = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Object3DSun->Create(GenerateSquareYZPlane(KColorWhite), m_SkyMaterial);
-	m_Object3DSun->UpdateQuadUV(m_SkyData.Sun.UVOffset, m_SkyData.Sun.UVSize);
-	
-	m_Object3DMoon = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Object3DMoon->Create(GenerateSquareYZPlane(KColorWhite), m_SkyMaterial);
-	m_Object3DMoon->UpdateQuadUV(m_SkyData.Moon.UVOffset, m_SkyData.Moon.UVSize);
-
-	m_Object3DCloud = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Object3DCloud->Create(GenerateSquareYZPlane(KColorWhite), m_SkyMaterial);
-	m_Object3DCloud->UpdateQuadUV(m_SkyData.Cloud.UVOffset, m_SkyData.Cloud.UVSize);
-
-	m_GameObject3DSkySphere = make_unique<CGameObject3D>("SkySphere");
-	m_GameObject3DSkySphere->ComponentRender.PtrObject3D = m_Object3DSkySphere.get();
-	m_GameObject3DSkySphere->ComponentRender.PtrVS = m_VSSky.get();
-	m_GameObject3DSkySphere->ComponentRender.PtrPS = m_PSSky.get();
-	m_GameObject3DSkySphere->ComponentPhysics.bIsPickable = false;
-	m_GameObject3DSkySphere->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoCulling | EFlagsGameObject3DRendering::NoLighting;
-
-	m_GameObject3DSun = make_unique<CGameObject3D>("Sun");
-	m_GameObject3DSun->ComponentTransform.Scaling = XMVectorSet(1.0f, ScalingFactor, ScalingFactor * m_SkyData.Sun.WidthHeightRatio, 0);
-	m_GameObject3DSun->ComponentRender.PtrObject3D = m_Object3DSun.get();
-	m_GameObject3DSun->ComponentRender.PtrVS = m_VSSky.get();
-	m_GameObject3DSun->ComponentRender.PtrPS = m_PSBase.get();
-	m_GameObject3DSun->ComponentRender.bIsTransparent = true;
-	m_GameObject3DSun->ComponentPhysics.bIsPickable = false;
-	m_GameObject3DSun->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoCulling | EFlagsGameObject3DRendering::NoLighting;
-
-	m_GameObject3DMoon = make_unique<CGameObject3D>("Moon");
-	m_GameObject3DMoon->ComponentTransform.Scaling = XMVectorSet(1.0f, ScalingFactor, ScalingFactor * m_SkyData.Moon.WidthHeightRatio, 0);
-	m_GameObject3DMoon->ComponentRender.PtrObject3D = m_Object3DMoon.get();
-	m_GameObject3DMoon->ComponentRender.PtrVS = m_VSSky.get();
-	m_GameObject3DMoon->ComponentRender.PtrPS = m_PSBase.get();
-	m_GameObject3DMoon->ComponentRender.bIsTransparent = true;
-	m_GameObject3DMoon->ComponentPhysics.bIsPickable = false;
-	m_GameObject3DMoon->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoCulling | EFlagsGameObject3DRendering::NoLighting;
-
-	m_GameObject3DCloud = make_unique<CGameObject3D>("Cloud");
-	m_GameObject3DCloud->ComponentTransform.Scaling = XMVectorSet(1.0f, ScalingFactor, ScalingFactor * m_SkyData.Cloud.WidthHeightRatio, 0);
-	m_GameObject3DCloud->ComponentRender.PtrObject3D = m_Object3DCloud.get();
-	m_GameObject3DCloud->ComponentRender.PtrVS = m_VSSky.get();
-	m_GameObject3DCloud->ComponentRender.PtrPS = m_PSBase.get();
-	m_GameObject3DCloud->ComponentRender.bIsTransparent = true;
-	m_GameObject3DCloud->ComponentPhysics.bIsPickable = false;
-	m_GameObject3DCloud->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoCulling | EFlagsGameObject3DRendering::NoLighting;
-
-	m_SkyData.bIsDataSet = true;
-
-	return;
-}
-
-void CGame::LoadSkyObjectData(tinyxml2::XMLElement* xmlSkyObject, SSkyData::SSkyObjectData& SkyObjectData)
-{
-	using namespace tinyxml2;
-
-	XMLElement* xmlUVOffset{ xmlSkyObject->FirstChildElement() };
-	SkyObjectData.UVOffset.x = xmlUVOffset->FloatAttribute("U");
-	SkyObjectData.UVOffset.y = xmlUVOffset->FloatAttribute("V");
-
-	XMLElement* xmlUVSize{ xmlUVOffset->NextSiblingElement() };
-	SkyObjectData.UVSize.x = xmlUVSize->FloatAttribute("U");
-	SkyObjectData.UVSize.y = xmlUVSize->FloatAttribute("V");
-
-	XMLElement* xmlWidthHeightRatio{ xmlUVSize->NextSiblingElement() };
-	SkyObjectData.WidthHeightRatio = stof(xmlWidthHeightRatio->GetText());
-}
-
-void CGame::SetDirectionalLight(const XMVECTOR& LightSourcePosition)
-{
-	m_cbPSBaseLightsData.DirectionalLightDirection = XMVector3Normalize(LightSourcePosition);
-
-	m_PSBase->UpdateConstantBuffer(1);
-}
-
-void CGame::SetDirectionalLight(const XMVECTOR& LightSourcePosition, const XMVECTOR& Color)
-{
-	m_cbPSBaseLightsData.DirectionalLightDirection = XMVector3Normalize(LightSourcePosition);
-	m_cbPSBaseLightsData.DirectionalColor = Color;
-
-	m_PSBase->UpdateConstantBuffer(1);
-}
-
-void CGame::SetAmbientlLight(const XMFLOAT3& Color, float Intensity)
-{
-	m_cbPSBaseLightsData.AmbientLightColor = Color;
-	m_cbPSBaseLightsData.AmbientLightIntensity = Intensity;
-
-	m_PSBase->UpdateConstantBuffer(1);
-}
-
-void CGame::CreateTerrain(const XMFLOAT2& TerrainSize, const CMaterial& Material, float MaskingDetail)
-{
-	m_Terrain.release();
-	m_Terrain = make_unique<CTerrain>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Terrain->Create(TerrainSize, Material, MaskingDetail);
-}
-
-void CGame::LoadTerrain(const string& TerrainFileName)
-{
-	m_Terrain.release();
-	m_Terrain = make_unique<CTerrain>(m_Device.Get(), m_DeviceContext.Get(), this);
-	m_Terrain->Load(TerrainFileName);
-	
-	ClearMaterials();
-	int MaterialCount{ m_Terrain->GetMaterialCount() };
-	for (int iMaterial = 0; iMaterial < MaterialCount; ++iMaterial)
-	{
-		const CMaterial& Material{ m_Terrain->GetMaterial(iMaterial) };
-
-		AddMaterial(Material);
-	}
-}
-
-void CGame::SaveTerrain(const string& TerrainFileName)
-{
-	if (!m_Terrain) return;
-
-	m_Terrain->Save(TerrainFileName);
-}
-
-void CGame::AddTerrainMaterial(const CMaterial& Material)
-{
-	if (!m_Terrain) return;
-
-	m_Terrain->AddMaterial(Material);
-}
-
-void CGame::SetTerrainMaterial(int MaterialID, const CMaterial& Material)
-{
-	if (!m_Terrain) return;
-
-	m_Terrain->SetMaterial(MaterialID, Material);
-}
-
-void CGame::SetTerrainSelectionSize(float& Size)
-{
-	m_Terrain->SetSelectionSize(Size);
-}
-
-void CGame::RecalculateTerrainNormalsTangents()
-{
-	m_Terrain->UpdateVertexNormalsTangents();
-}
-
-CCamera* CGame::AddCamera(const SCameraData& CameraData)
-{
-	m_vCameras.emplace_back(CameraData);
-
-	return &m_vCameras.back();
-}
-
-CCamera* CGame::GetCamera(size_t Index)
-{
-	assert(Index < m_vCameras.size());
-	return &m_vCameras[Index];
-}
-
-void CGame::CreateWin32Window(WNDPROC WndProc, LPCTSTR WindowName)
-{
-	assert(!m_hWnd);
-
-	constexpr LPCTSTR KClassName{ TEXT("GameWindow") };
+	constexpr LPCSTR KClassName{ "GameWindow" };
 	constexpr DWORD KWindowStyle{ WS_CAPTION | WS_SYSMENU };
 
-	WNDCLASSEX WindowClass{};
+	WNDCLASSEXA WindowClass{};
 	WindowClass.cbSize = sizeof(WNDCLASSEX);
 	WindowClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
-	WindowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-	WindowClass.hIcon = WindowClass.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
+	WindowClass.hCursor = LoadCursorA(nullptr, IDC_ARROW);
+	WindowClass.hIcon = WindowClass.hIconSm = LoadIconA(nullptr, IDI_APPLICATION);
 	WindowClass.hInstance = m_hInstance;
 	WindowClass.lpfnWndProc = WndProc;
 	WindowClass.lpszClassName = KClassName;
 	WindowClass.lpszMenuName = nullptr;
 	WindowClass.style = CS_VREDRAW | CS_HREDRAW;
-	RegisterClassEx(&WindowClass);
+	RegisterClassExA(&WindowClass);
 
 	RECT WindowRect{};
 	WindowRect.right = static_cast<LONG>(m_WindowSize.x);
 	WindowRect.bottom = static_cast<LONG>(m_WindowSize.y);
 	AdjustWindowRect(&WindowRect, KWindowStyle, false);
 
-	assert(m_hWnd = CreateWindowEx(0, KClassName, WindowName, KWindowStyle,
-		CW_USEDEFAULT,  CW_USEDEFAULT, WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
+	assert(m_hWnd = CreateWindowExA(0, KClassName, WindowName.c_str(), KWindowStyle,
+		CW_USEDEFAULT, CW_USEDEFAULT, WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
 		nullptr, nullptr, m_hInstance, nullptr));
 
 	ShowWindow(m_hWnd, SW_SHOW);
 	UpdateWindow(m_hWnd);
 }
 
-void CGame::InitializeDirectX(const wstring& FontFileName, bool bWindowed)
+void CGame::InitializeDirectX(bool bWindowed)
 {
 	CreateSwapChain(bWindowed);
 
-	CreateSetViews();
+	CreateViews();
 
-	SetViewports();
-
-	SetPerspective(KDefaultFOV, KDefaultNearZ, KDefaultFarZ);
+	CreateDepthStencilStates();
+	CreateBlendStates();
 
 	CreateInputDevices();
 
+	CreateConstantBuffers();
 	CreateBaseShaders();
 
 	CreateMiniAxes();
-
 	CreatePickingRay();
 	CreatePickedTriangle();
-
 	CreateBoundingSphere();
-
 	Create3DGizmos();
 
-	m_MatrixProjection2D = XMMatrixOrthographicLH(m_WindowSize.x, m_WindowSize.y, 0.0f, 1.0f);
-	m_SpriteBatch = make_unique<SpriteBatch>(m_DeviceContext.Get());
-	m_SpriteFont = make_unique<SpriteFont>(m_Device.Get(), FontFileName.c_str());
+	CreateScreenQuadVertexBuffer();
+
+	SetProjectionMatrices(KDefaultFOV, KDefaultNearZ, KDefaultFarZ);
+	InitializeViewports();
+
 	m_CommonStates = make_unique<CommonStates>(m_Device.Get());
 }
 
+void CGame::InitializeEditorAssets()
+{
+	CreateEditorCamera();
+
+	if (!m_EnvironmentTexture)
+	{
+		// @important: use already mipmapped cubemap texture
+		m_EnvironmentTexture = make_unique<CTexture>(m_Device.Get(), m_DeviceContext.Get());
+		m_EnvironmentTexture->CreateCubeMapFromFile("Asset\\uffizi_environment.dds");
+		m_EnvironmentTexture->SetSlot(KEnvironmentTextureSlot);
+	}
+	
+	if (!m_IrradianceTexture)
+	{
+		// @important: use already mipmapped cubemap texture
+		m_IrradianceTexture = make_unique<CTexture>(m_Device.Get(), m_DeviceContext.Get());
+		m_IrradianceTexture->CreateCubeMapFromFile("Asset\\uffizi_irradiance.dds");
+		m_IrradianceTexture->SetSlot(KIrradianceTextureSlot);
+	}
+
+	if (!m_PrefilteredRadianceTexture)
+	{
+		// @important: use already mipmapped cubemap texture
+		m_PrefilteredRadianceTexture = make_unique<CTexture>(m_Device.Get(), m_DeviceContext.Get());
+		m_PrefilteredRadianceTexture->CreateCubeMapFromFile("Asset\\uffizi_prefiltered_radiance.dds");
+		m_PrefilteredRadianceTexture->SetSlot(KPrefilteredRadianceTextureSlot);
+	}
+
+	if (!m_IntegratedBRDFTexture)
+	{
+		// @important: this is not cubemap nor mipmapped!
+		m_IntegratedBRDFTexture = make_unique<CTexture>(m_Device.Get(), m_DeviceContext.Get());
+		m_IntegratedBRDFTexture->CreateTextureFromFile("Asset\\integrated_brdf.dds", false);
+		m_IntegratedBRDFTexture->SetSlot(KIntegratedBRDFTextureSlot);
+	}
+
+	if (InsertObject3DLine("Default3DAxes", false))
+	{
+		CObject3DLine* Grid{ GetObject3DLine("Default3DAxes") };
+		Grid->Create(Generate3DGrid(0));
+	}
+}
+
+void CGame::InitializeImGui(const std::string& FontFileName, float FontSize)
+{
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGui_ImplWin32_Init(m_hWnd);
+	ImGui_ImplDX11_Init(m_Device.Get(), m_DeviceContext.Get());
+
+	ImGuiIO& igIO{ ImGui::GetIO() };
+	igIO.Fonts->AddFontDefault();
+	
+	m_EditorGUIFont = igIO.Fonts->AddFontFromFileTTF(FontFileName.c_str(), FontSize, nullptr, igIO.Fonts->GetGlyphRangesKorean());
+}
 
 void CGame::CreateSwapChain(bool bWindowed)
 {
 	DXGI_SWAP_CHAIN_DESC SwapChainDesc{};
 	SwapChainDesc.BufferCount = 1;
-	SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // LDR
+	//SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; // HDR
 	SwapChainDesc.BufferDesc.Width = static_cast<UINT>(m_WindowSize.x);
 	SwapChainDesc.BufferDesc.Height = static_cast<UINT>(m_WindowSize.y);
 	SwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
@@ -409,13 +208,44 @@ void CGame::CreateSwapChain(bool bWindowed)
 		&SwapChainDesc, &m_SwapChain, &m_Device, nullptr, &m_DeviceContext);
 }
 
-void CGame::CreateSetViews()
+void CGame::CreateViews()
 {
+	// Create back buffer RTV
 	ComPtr<ID3D11Texture2D> BackBuffer{};
 	m_SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), &BackBuffer);
+	m_Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &m_DeviceRTV);
 
-	m_Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &m_RenderTargetView);
+	// Create deferred RTV
+	{
+		D3D11_TEXTURE2D_DESC Texture2DDesc{};
+		Texture2DDesc.ArraySize = 1;
+		Texture2DDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		Texture2DDesc.CPUAccessFlags = 0;
+		Texture2DDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // LDR
+		//Texture2DDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; // HDR
+		Texture2DDesc.Height = static_cast<UINT>(m_WindowSize.y);
+		Texture2DDesc.MipLevels = 1;
+		Texture2DDesc.SampleDesc.Count = 1;
+		Texture2DDesc.SampleDesc.Quality = 0;
+		Texture2DDesc.Usage = D3D11_USAGE_DEFAULT;
+		Texture2DDesc.Width = static_cast<UINT>(m_WindowSize.x);
+		m_Device->CreateTexture2D(&Texture2DDesc, nullptr, m_ScreenQuadTexture.ReleaseAndGetAddressOf());
 
+		D3D11_SHADER_RESOURCE_VIEW_DESC ScreenQuadSRVDesc{};
+		ScreenQuadSRVDesc.Format = Texture2DDesc.Format;
+		ScreenQuadSRVDesc.Texture2D.MipLevels = 1;
+		ScreenQuadSRVDesc.Texture2D.MostDetailedMip = 0;
+		ScreenQuadSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		m_Device->CreateShaderResourceView(m_ScreenQuadTexture.Get(), &ScreenQuadSRVDesc, m_ScreenQuadSRV.ReleaseAndGetAddressOf());
+
+		D3D11_RENDER_TARGET_VIEW_DESC ScreenQuadRTVDesc{};
+		ScreenQuadRTVDesc.Format = Texture2DDesc.Format;
+		ScreenQuadRTVDesc.Texture2D.MipSlice = 0;
+		ScreenQuadRTVDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		m_Device->CreateRenderTargetView(m_ScreenQuadTexture.Get(), &ScreenQuadRTVDesc, m_ScreenQuadRTV.ReleaseAndGetAddressOf());
+	}
+
+	// Create depth-stencil view
 	D3D11_TEXTURE2D_DESC DepthStencilBufferDesc{};
 	DepthStencilBufferDesc.ArraySize = 1;
 	DepthStencilBufferDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
@@ -430,11 +260,9 @@ void CGame::CreateSetViews()
 	DepthStencilBufferDesc.Usage = D3D11_USAGE_DEFAULT;
 	m_Device->CreateTexture2D(&DepthStencilBufferDesc, nullptr, &m_DepthStencilBuffer);
 	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), nullptr, &m_DepthStencilView);
-
-	m_DeviceContext->OMSetRenderTargets(1, m_RenderTargetView.GetAddressOf(), m_DepthStencilView.Get());
 }
 
-void CGame::SetViewports()
+void CGame::InitializeViewports()
 {
 	{
 		m_vViewports.emplace_back();
@@ -471,6 +299,63 @@ void CGame::SetViewports()
 		Viewport.MinDepth = 0.0f;
 		Viewport.MaxDepth = 1.0f;
 	}
+
+	{
+		m_vViewports.emplace_back();
+
+		D3D11_VIEWPORT& Viewport{ m_vViewports.back() };
+		Viewport.TopLeftX = m_WindowSize.x * 1.0f / 8.0f;
+		Viewport.TopLeftY = m_WindowSize.y * 7.0f / 8.0f;
+		Viewport.Width = m_WindowSize.x / 8.0f;
+		Viewport.Height = m_WindowSize.y / 8.0f;
+		Viewport.MinDepth = 0.0f;
+		Viewport.MaxDepth = 1.0f;
+	}
+
+	{
+		m_vViewports.emplace_back();
+
+		D3D11_VIEWPORT& Viewport{ m_vViewports.back() };
+		Viewport.TopLeftX = m_WindowSize.x * 2.0f / 8.0f;
+		Viewport.TopLeftY = m_WindowSize.y * 7.0f / 8.0f;
+		Viewport.Width = m_WindowSize.x / 8.0f;
+		Viewport.Height = m_WindowSize.y / 8.0f;
+		Viewport.MinDepth = 0.0f;
+		Viewport.MaxDepth = 1.0f;
+	}
+}
+
+void CGame::CreateDepthStencilStates()
+{
+	D3D11_DEPTH_STENCIL_DESC DepthStencilDesc{};
+	DepthStencilDesc.DepthEnable = TRUE;
+	DepthStencilDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+	DepthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+	DepthStencilDesc.StencilEnable = FALSE;
+
+	assert(SUCCEEDED(m_Device->CreateDepthStencilState(&DepthStencilDesc, m_DepthStencilStateLessEqualNoWrite.ReleaseAndGetAddressOf())));
+
+	DepthStencilDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+	DepthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+
+	assert(SUCCEEDED(m_Device->CreateDepthStencilState(&DepthStencilDesc, m_DepthStencilStateAlways.ReleaseAndGetAddressOf())));
+}
+
+void CGame::CreateBlendStates()
+{
+	D3D11_BLEND_DESC BlendDesc{};
+	BlendDesc.AlphaToCoverageEnable = TRUE;
+	BlendDesc.IndependentBlendEnable = FALSE;
+	BlendDesc.RenderTarget[0].BlendEnable = TRUE;
+	BlendDesc.RenderTarget[0].BlendOp;
+	BlendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+	BlendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+	BlendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+	BlendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+	BlendDesc.RenderTarget[0].BlendOp = BlendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	BlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+	m_Device->CreateBlendState(&BlendDesc, m_BlendAlphaToCoverage.ReleaseAndGetAddressOf());
 }
 
 void CGame::CreateInputDevices()
@@ -482,132 +367,182 @@ void CGame::CreateInputDevices()
 	m_Mouse->SetMode(Mouse::Mode::MODE_ABSOLUTE);
 }
 
+void CGame::CreateConstantBuffers()
+{
+	m_CBSpaceWVP = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBSpaceWVPData, sizeof(m_CBSpaceWVPData));
+	m_CBSpaceVP = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBSpaceVPData, sizeof(m_CBSpaceVPData));
+	m_CBSpace2D = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBSpace2DData, sizeof(m_CBSpace2DData));
+	m_CBTessFactor = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBTessFactorData, sizeof(m_CBTessFactorData));
+	m_CBDisplacement = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBDisplacementData, sizeof(m_CBDisplacementData));
+	m_CBLight = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBLightData, sizeof(m_CBLightData));
+	m_CBMaterial = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBMaterialData, sizeof(m_CBMaterialData));
+	m_CBPSFlags = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBPSFlagsData, sizeof(m_CBPSFlagsData));
+	m_CBGizmoColorFactor = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBGizmoColorFactorData, sizeof(m_CBGizmoColorFactorData));
+	m_CBPS2DFlags = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBPS2DFlagsData, sizeof(m_CBPS2DFlagsData));
+	m_CBEditorTime = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBEditorTimeData, sizeof(m_CBEditorTimeData));
+	m_CBScreen = make_unique<CConstantBuffer>(m_Device.Get(), m_DeviceContext.Get(),
+		&m_CBScreenData, sizeof(m_CBScreenData));
+
+	m_CBSpaceWVP->Create();
+	m_CBSpaceVP->Create();
+	m_CBSpace2D->Create();
+	m_CBTessFactor->Create();
+	m_CBDisplacement->Create();
+	m_CBLight->Create();
+	m_CBMaterial->Create();
+	m_CBPSFlags->Create();
+	m_CBGizmoColorFactor->Create();
+	m_CBPS2DFlags->Create();
+	m_CBEditorTime->Create();
+	m_CBScreen->Create();
+}
+
 void CGame::CreateBaseShaders()
 {
 	m_VSBase = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSBase->Create(EShaderType::VertexShader, L"Shader\\VSBase.hlsl", "main", KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
-	m_VSBase->AddConstantBuffer(&m_cbVSSpaceData, sizeof(SCBVSSpaceData));
-
-	m_VSAnimation = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSAnimation->Create(EShaderType::VertexShader, L"Shader\\VSAnimation.hlsl", "main", KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
-	m_VSAnimation->AddConstantBuffer(&m_cbVSSpaceData, sizeof(SCBVSSpaceData));
-	m_VSAnimation->AddConstantBuffer(&m_cbVSAnimationBonesData, sizeof(SCBVSAnimationBonesData));
+	m_VSBase->Create(EShaderType::VertexShader, L"Shader\\VSBase.hlsl", "main",
+		KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
+	m_VSBase->AttachConstantBuffer(m_CBSpaceWVP.get());
 
 	m_VSSky = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSSky->Create(EShaderType::VertexShader, L"Shader\\VSSky.hlsl", "main", KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
-	m_VSSky->AddConstantBuffer(&m_cbVSSpaceData, sizeof(SCBVSSpaceData));
+	m_VSSky->Create(EShaderType::VertexShader, L"Shader\\VSSky.hlsl", "main", 
+		KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
+	m_VSSky->AttachConstantBuffer(m_CBSpaceWVP.get());
 
 	m_VSLine = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSLine->Create(EShaderType::VertexShader, L"Shader\\VSLine.hlsl", "main", KVSLineInputElementDescs, ARRAYSIZE(KVSLineInputElementDescs));
-	m_VSLine->AddConstantBuffer(&m_cbVSSpaceData, sizeof(SCBVSSpaceData));
+	m_VSLine->Create(EShaderType::VertexShader, L"Shader\\VSLine.hlsl", "main", 
+		CObject3DLine::KInputElementDescs, ARRAYSIZE(CObject3DLine::KInputElementDescs));
+	m_VSLine->AttachConstantBuffer(m_CBSpaceWVP.get());
 
 	m_VSGizmo = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSGizmo->Create(EShaderType::VertexShader, L"Shader\\VSGizmo.hlsl", "main", KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
-	m_VSGizmo->AddConstantBuffer(&m_cbVSSpaceData, sizeof(SCBVSSpaceData));
+	m_VSGizmo->Create(EShaderType::VertexShader, L"Shader\\VSGizmo.hlsl", "main", 
+		KBaseInputElementDescs, ARRAYSIZE(KBaseInputElementDescs));
+	m_VSGizmo->AttachConstantBuffer(m_CBSpaceWVP.get());
+
+	m_VSScreenQuad = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	//m_VSScreenQuad->Create(EShaderType::VertexShader, L"Shader\\VSScreenQuad.hlsl", "main");
+	m_VSScreenQuad->Create(EShaderType::VertexShader, L"Shader\\VSScreenQuad.hlsl", "main", 
+		KScreenQuadInputElementDescs, ARRAYSIZE(KScreenQuadInputElementDescs));
 
 	m_VSBase2D = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_VSBase2D->Create(EShaderType::VertexShader, L"Shader\\VSBase2D.hlsl", "main", KVS2DBaseInputLayout, ARRAYSIZE(KVS2DBaseInputLayout));
-	m_VSBase2D->AddConstantBuffer(&m_cbVS2DSpaceData, sizeof(SCBVS2DSpaceData));
+	m_VSBase2D->Create(EShaderType::VertexShader, L"Shader\\VSBase2D.hlsl", "main",
+		CObject2D::KInputLayout, ARRAYSIZE(CObject2D::KInputLayout));
+	m_VSBase2D->AttachConstantBuffer(m_CBSpace2D.get());
 
-	m_HSBezier = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_HSBezier->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main");
-	m_HSBezier->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
+	m_VSNull = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_VSNull->Create(EShaderType::VertexShader, L"Shader\\VSNull.hlsl", "main");
 
-	m_HSBezierEven = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_HSBezierEven->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main_even");
-	m_HSBezierEven->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
+	m_HSTriOdd = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSTriOdd->Create(EShaderType::HullShader, L"Shader\\HSTri.hlsl", "main");
+	m_HSTriOdd->AttachConstantBuffer(m_CBTessFactor.get());
 
-	m_HSBezierInteger = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_HSBezierInteger->Create(EShaderType::HullShader, L"Shader\\HSBezier.hlsl", "main_integer");
-	m_HSBezierInteger->AddConstantBuffer(&m_cbHSTessFactorData, sizeof(SCBHSTessFectorData));
+	m_HSTriEven = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSTriEven->Create(EShaderType::HullShader, L"Shader\\HSTri.hlsl", "even");
+	m_HSTriEven->AttachConstantBuffer(m_CBTessFactor.get());
 
-	m_DSBezier = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_DSBezier->Create(EShaderType::DomainShader, L"Shader\\DSBezier.hlsl", "main");
-	m_DSBezier->AddConstantBuffer(&m_cbDSSpaceData, sizeof(SCBDSSpaceData));
+	m_HSTriInteger = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSTriInteger->Create(EShaderType::HullShader, L"Shader\\HSTri.hlsl", "integer");
+	m_HSTriInteger->AttachConstantBuffer(m_CBTessFactor.get());
+
+	m_HSQuadSphere = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_HSQuadSphere->Create(EShaderType::HullShader, L"Shader\\HSQuadSphere.hlsl", "main");
+	m_HSQuadSphere->AttachConstantBuffer(m_CBTessFactor.get());
+
+	m_DSTri = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_DSTri->Create(EShaderType::DomainShader, L"Shader\\DSTri.hlsl", "main");
+	m_DSTri->AttachConstantBuffer(m_CBSpaceVP.get());
+	m_DSTri->AttachConstantBuffer(m_CBDisplacement.get());
+
+	m_DSQuadSphere = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_DSQuadSphere->Create(EShaderType::DomainShader, L"Shader\\DSQuadSphere.hlsl", "main");
+	m_DSQuadSphere->AttachConstantBuffer(m_CBSpaceWVP.get());
 
 	m_GSNormal = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_GSNormal->Create(EShaderType::GeometryShader, L"Shader\\GSNormal.hlsl", "main");
-	m_GSNormal->AddConstantBuffer(&m_cbGSSpaceData, sizeof(SCBGSSpaceData));
+	m_GSNormal->AttachConstantBuffer(m_CBSpaceVP.get());
 
 	m_PSBase = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_PSBase->Create(EShaderType::PixelShader, L"Shader\\PSBase.hlsl", "main");
-	m_PSBase->AddConstantBuffer(&m_cbPSBaseFlagsData, sizeof(SCBPSBaseFlagsData));
-	m_PSBase->AddConstantBuffer(&m_cbPSBaseLightsData, sizeof(SCBPSBaseLightsData));
-	m_PSBase->AddConstantBuffer(&m_cbPSBaseMaterialData, sizeof(SCBPSBaseMaterialData));
-	m_PSBase->AddConstantBuffer(&m_cbPSBaseEyeData, sizeof(SCBPSBaseEyeData));
+	m_PSBase->AttachConstantBuffer(m_CBPSFlags.get());
+	m_PSBase->AttachConstantBuffer(m_CBLight.get());
+	m_PSBase->AttachConstantBuffer(m_CBMaterial.get());
 
 	m_PSVertexColor = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_PSVertexColor->Create(EShaderType::PixelShader, L"Shader\\PSVertexColor.hlsl", "main");
-
-	m_PSSky = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_PSSky->Create(EShaderType::PixelShader, L"Shader\\PSSky.hlsl", "main");
-	m_PSSky->AddConstantBuffer(&m_cbPSSkyTimeData, sizeof(SCBPSSkyTimeData));
 
 	m_PSLine = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_PSLine->Create(EShaderType::PixelShader, L"Shader\\PSLine.hlsl", "main");
 
 	m_PSGizmo = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_PSGizmo->Create(EShaderType::PixelShader, L"Shader\\PSGizmo.hlsl", "main");
-	m_PSGizmo->AddConstantBuffer(&m_cbPSGizmoColorFactorData, sizeof(SCBPSGizmoColorFactorData));
+	m_PSGizmo->AttachConstantBuffer(m_CBGizmoColorFactor.get());
 
-	m_PSTerrain = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_PSTerrain->Create(EShaderType::PixelShader, L"Shader\\PSTerrain.hlsl", "main");
-	m_PSTerrain->AddConstantBuffer(&m_cbPSTerrainSpaceData, sizeof(SCBPSTerrainSpaceData));
+	m_PSScreenQuad = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_PSScreenQuad->Create(EShaderType::PixelShader, L"Shader\\PSScreenQuad.hlsl", "main");
+
+	m_CBScreenData.InverseScreenSize = XMFLOAT2(1.0f / m_WindowSize.x, 1.0f / m_WindowSize.y);
+	m_CBScreen->Update();
+
+	m_PSSky = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_PSSky->Create(EShaderType::PixelShader, L"Shader\\PSSky.hlsl", "main");
 
 	m_PSBase2D = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
 	m_PSBase2D->Create(EShaderType::PixelShader, L"Shader\\PSBase2D.hlsl", "main");
-	m_PSBase2D->AddConstantBuffer(&m_cbPS2DFlagsData, sizeof(SCBPS2DFlagsData));
+	m_PSBase2D->AttachConstantBuffer(m_CBPS2DFlags.get());
 
-	m_PSMasking2D = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
-	m_PSMasking2D->Create(EShaderType::PixelShader, L"Shader\\PSMasking2D.hlsl", "main");
+	m_PSTest = make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get());
+	m_PSTest->Create(EShaderType::PixelShader, L"Shader\\PSTest.hlsl", "main");
 }
 
 void CGame::CreateMiniAxes()
 {
-	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this));
-	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this));
-	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this));
+	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>("AxisX", m_Device.Get(), m_DeviceContext.Get(), this));
+	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>("AxisY", m_Device.Get(), m_DeviceContext.Get(), this));
+	m_vObject3DMiniAxes.emplace_back(make_unique<CObject3D>("AxisZ", m_Device.Get(), m_DeviceContext.Get(), this));
 
-	SMesh Cone{ GenerateCone(0, 1.0f, 1.0f, 16) };
-	vector<CMaterial> vMaterials{};
-	vMaterials.resize(3);
-	vMaterials[0].SetUniformColor(XMFLOAT3(1, 0, 0));
-	vMaterials[1].SetUniformColor(XMFLOAT3(0, 1, 0));
-	vMaterials[2].SetUniformColor(XMFLOAT3(0, 0, 1));
-	m_vObject3DMiniAxes[0]->Create(Cone, vMaterials[0]);
-	m_vObject3DMiniAxes[1]->Create(Cone, vMaterials[1]);
-	m_vObject3DMiniAxes[2]->Create(Cone, vMaterials[2]);
+	const SMesh KAxisCone{ GenerateCone(0, 1.0f, 1.0f, 16) };
+	vector<CMaterialData> vMaterialData{};
+	vMaterialData.resize(3);
+	vMaterialData[0].SetUniformColor(XMFLOAT3(1, 0, 0));
+	vMaterialData[1].SetUniformColor(XMFLOAT3(0, 1, 0));
+	vMaterialData[2].SetUniformColor(XMFLOAT3(0, 0, 1));
+	m_vObject3DMiniAxes[0]->Create(KAxisCone, vMaterialData[0]);
+	m_vObject3DMiniAxes[0]->ComponentRender.PtrVS = m_VSBase.get();
+	m_vObject3DMiniAxes[0]->ComponentRender.PtrPS = m_PSBase.get();
+	m_vObject3DMiniAxes[0]->ComponentTransform.Roll = -XM_PIDIV2;
+	m_vObject3DMiniAxes[0]->eFlagsRendering = CObject3D::EFlagsRendering::NoLighting;
 
-	m_vGameObject3DMiniAxes.emplace_back(make_unique<CGameObject3D>("AxisX"));
-	m_vGameObject3DMiniAxes.emplace_back(make_unique<CGameObject3D>("AxisY"));
-	m_vGameObject3DMiniAxes.emplace_back(make_unique<CGameObject3D>("AxisZ"));
+	m_vObject3DMiniAxes[1]->Create(KAxisCone, vMaterialData[1]);
+	m_vObject3DMiniAxes[1]->ComponentRender.PtrVS = m_VSBase.get();
+	m_vObject3DMiniAxes[1]->ComponentRender.PtrPS = m_PSBase.get();
+	m_vObject3DMiniAxes[1]->eFlagsRendering = CObject3D::EFlagsRendering::NoLighting;
 
-	m_vGameObject3DMiniAxes[0]->ComponentRender.PtrObject3D = m_vObject3DMiniAxes[0].get();
-	m_vGameObject3DMiniAxes[0]->ComponentRender.PtrVS = m_VSBase.get();
-	m_vGameObject3DMiniAxes[0]->ComponentRender.PtrPS = m_PSBase.get();
-	m_vGameObject3DMiniAxes[0]->ComponentTransform.Roll = -XM_PIDIV2;
-	m_vGameObject3DMiniAxes[0]->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoLighting;
+	m_vObject3DMiniAxes[2]->Create(KAxisCone, vMaterialData[2]);
+	m_vObject3DMiniAxes[2]->ComponentRender.PtrVS = m_VSBase.get();
+	m_vObject3DMiniAxes[2]->ComponentRender.PtrPS = m_PSBase.get();
+	m_vObject3DMiniAxes[2]->ComponentTransform.Yaw = -XM_PIDIV2;
+	m_vObject3DMiniAxes[2]->ComponentTransform.Roll = -XM_PIDIV2;
+	m_vObject3DMiniAxes[2]->eFlagsRendering = CObject3D::EFlagsRendering::NoLighting;
 
-	m_vGameObject3DMiniAxes[1]->ComponentRender.PtrObject3D = m_vObject3DMiniAxes[1].get();
-	m_vGameObject3DMiniAxes[1]->ComponentRender.PtrVS = m_VSBase.get();
-	m_vGameObject3DMiniAxes[1]->ComponentRender.PtrPS = m_PSBase.get();
-	m_vGameObject3DMiniAxes[1]->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoLighting;
-
-	m_vGameObject3DMiniAxes[2]->ComponentRender.PtrObject3D = m_vObject3DMiniAxes[2].get();
-	m_vGameObject3DMiniAxes[2]->ComponentRender.PtrVS = m_VSBase.get();
-	m_vGameObject3DMiniAxes[2]->ComponentRender.PtrPS = m_PSBase.get();
-	m_vGameObject3DMiniAxes[2]->ComponentTransform.Yaw = -XM_PIDIV2;
-	m_vGameObject3DMiniAxes[2]->ComponentTransform.Roll = -XM_PIDIV2;
-	m_vGameObject3DMiniAxes[2]->eFlagsGameObject3DRendering = EFlagsGameObject3DRendering::NoLighting;
-
-	m_vGameObject3DMiniAxes[0]->ComponentTransform.Scaling =
-		m_vGameObject3DMiniAxes[1]->ComponentTransform.Scaling =
-		m_vGameObject3DMiniAxes[2]->ComponentTransform.Scaling = XMVectorSet(0.1f, 0.8f, 0.1f, 0);
+	m_vObject3DMiniAxes[0]->ComponentTransform.Scaling =
+		m_vObject3DMiniAxes[1]->ComponentTransform.Scaling =
+		m_vObject3DMiniAxes[2]->ComponentTransform.Scaling = XMVectorSet(0.1f, 0.8f, 0.1f, 0);
 }
 
 void CGame::CreatePickingRay()
 {
-	m_Object3DLinePickingRay = make_unique<CObject3DLine>(m_Device.Get(), m_DeviceContext.Get());
+	m_Object3DLinePickingRay = make_unique<CObject3DLine>("PickingRay", m_Device.Get(), m_DeviceContext.Get());
 
 	vector<SVertex3DLine> Vertices{};
 	Vertices.emplace_back(XMVectorSet(0, 0, 0, 1), XMVectorSet(1, 0, 0, 1));
@@ -616,134 +551,108 @@ void CGame::CreatePickingRay()
 	m_Object3DLinePickingRay->Create(Vertices);
 }
 
-void CGame::CreateBoundingSphere()
-{
-	m_Object3DBoundingSphere = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-
-	m_Object3DBoundingSphere->Create(GenerateSphere(16));
-}
-
 void CGame::CreatePickedTriangle()
 {
-	m_Object3DPickedTriangle = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	m_Object3DPickedTriangle = make_unique<CObject3D>("PickedTriangle", m_Device.Get(), m_DeviceContext.Get(), this);
 
 	m_Object3DPickedTriangle->Create(GenerateTriangle(XMVectorSet(0, 0, 1.5f, 1), XMVectorSet(+1.0f, 0, 0, 1), XMVectorSet(-1.0f, 0, 0, 1),
 		XMVectorSet(1.0f, 1.0f, 0.0f, 1.0f)));
 }
 
+void CGame::CreateBoundingSphere()
+{
+	m_Object3DBoundingSphere = make_unique<CObject3D>("BoundingSphere", m_Device.Get(), m_DeviceContext.Get(), this);
+
+	m_Object3DBoundingSphere->Create(GenerateSphere(16));
+}
+
 void CGame::Create3DGizmos()
 {
-	const static XMVECTOR ColorX{ XMVectorSet(1.0f, 0.1f, 0.1f, 1) };
-	const static XMVECTOR ColorY{ XMVectorSet(0.1f, 1.0f, 0.1f, 1) };
-	const static XMVECTOR ColorZ{ XMVectorSet(0.1f, 0.1f, 1.0f, 1) };
+	const static XMVECTOR ColorX{ XMVectorSet(1.00f, 0.25f, 0.25f, 1) };
+	const static XMVECTOR ColorY{ XMVectorSet(0.25f, 1.00f, 0.25f, 1) };
+	const static XMVECTOR ColorZ{ XMVectorSet(0.25f, 0.25f, 1.00f, 1) };
 
-	m_Object3D_3DGizmoRotationPitch = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	if (!m_Object3D_3DGizmoRotationPitch)
 	{
-		SMesh MeshRing{ GenerateTorus(ColorX, 0.05f) };
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorX) };
+		m_Object3D_3DGizmoRotationPitch = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshRing{ GenerateTorus(K3DGizmoRadius, 16, KRotationGizmoRingSegmentCount, ColorX) };
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorX) };
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
-		MeshRing = MergeStaticMeshes(MeshRing, MeshAxis);
-		m_Object3D_3DGizmoRotationPitch->Create(MeshRing);
+		m_Object3D_3DGizmoRotationPitch->Create(MergeStaticMeshes(MeshRing, MeshAxis));
+		m_Object3D_3DGizmoRotationPitch->ComponentTransform.Roll = -XM_PIDIV2;
+	}
+	
+	if (!m_Object3D_3DGizmoRotationYaw)
+	{
+		m_Object3D_3DGizmoRotationYaw = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshRing{ GenerateTorus(K3DGizmoRadius, 16, KRotationGizmoRingSegmentCount, ColorY) };
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorY) };
+		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
+		m_Object3D_3DGizmoRotationYaw->Create(MergeStaticMeshes(MeshRing, MeshAxis));
 	}
 
-	m_Object3D_3DGizmoRotationYaw = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	if (!m_Object3D_3DGizmoRotationRoll)
 	{
-		SMesh MeshRing{ GenerateTorus(ColorY, 0.05f) };
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorY) };
+		m_Object3D_3DGizmoRotationRoll = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshRing{ GenerateTorus(K3DGizmoRadius, 16, KRotationGizmoRingSegmentCount, ColorZ) };
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorZ) };
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
-		MeshRing = MergeStaticMeshes(MeshRing, MeshAxis);
-		m_Object3D_3DGizmoRotationYaw->Create(MeshRing);
+		m_Object3D_3DGizmoRotationRoll->Create(MergeStaticMeshes(MeshRing, MeshAxis));
+		m_Object3D_3DGizmoRotationRoll->ComponentTransform.Pitch = XM_PIDIV2;
 	}
-
-	m_Object3D_3DGizmoRotationRoll = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	
+	if (!m_Object3D_3DGizmoTranslationX)
 	{
-		SMesh MeshRing{ GenerateTorus(ColorZ, 0.05f) };
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorZ) };
-		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
-		MeshRing = MergeStaticMeshes(MeshRing, MeshAxis);
-		m_Object3D_3DGizmoRotationRoll->Create(MeshRing);
-	}
-
-	m_GameObject3D_3DGizmoRotationPitch = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoRotationPitch->ComponentTransform.Roll = -XM_PIDIV2;
-	m_GameObject3D_3DGizmoRotationPitch->ComponentRender.PtrObject3D = m_Object3D_3DGizmoRotationPitch.get();
-	m_GameObject3D_3DGizmoRotationPitch->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoRotationPitch->ComponentRender.PtrPS = m_PSGizmo.get();
-
-	m_GameObject3D_3DGizmoRotationYaw = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoRotationYaw->ComponentRender.PtrObject3D = m_Object3D_3DGizmoRotationYaw.get();
-	m_GameObject3D_3DGizmoRotationYaw->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoRotationYaw->ComponentRender.PtrPS = m_PSGizmo.get();
-
-	m_GameObject3D_3DGizmoRotationRoll = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoRotationRoll->ComponentTransform.Pitch = XM_PIDIV2;
-	m_GameObject3D_3DGizmoRotationRoll->ComponentRender.PtrObject3D = m_Object3D_3DGizmoRotationRoll.get();
-	m_GameObject3D_3DGizmoRotationRoll->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoRotationRoll->ComponentRender.PtrPS = m_PSGizmo.get();
-
-
-	m_Object3D_3DGizmoTranslationX = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
-	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorX) };
+		m_Object3D_3DGizmoTranslationX = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorX) };
 		SMesh MeshCone{ GenerateCone(0, 0.1f, 0.5f, 16, ColorX) };
 		TranslateMesh(MeshCone, XMVectorSet(0, 0.5f, 0, 0));
 		MeshAxis = MergeStaticMeshes(MeshAxis, MeshCone);
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
 		m_Object3D_3DGizmoTranslationX->Create(MeshAxis);
+		m_Object3D_3DGizmoTranslationX->ComponentTransform.Roll = -XM_PIDIV2;
 	}
-
-	m_Object3D_3DGizmoTranslationY = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	
+	if (!m_Object3D_3DGizmoTranslationY)
 	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorY) };
+		m_Object3D_3DGizmoTranslationY = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorY) };
 		SMesh MeshCone{ GenerateCone(0, 0.1f, 0.5f, 16, ColorY) };
 		TranslateMesh(MeshCone, XMVectorSet(0, 0.5f, 0, 0));
 		MeshAxis = MergeStaticMeshes(MeshAxis, MeshCone);
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
 		m_Object3D_3DGizmoTranslationY->Create(MeshAxis);
 	}
-
-	m_Object3D_3DGizmoTranslationZ = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	
+	if (!m_Object3D_3DGizmoTranslationZ)
 	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorZ) };
+		m_Object3D_3DGizmoTranslationZ = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorZ) };
 		SMesh MeshCone{ GenerateCone(0, 0.1f, 0.5f, 16, ColorZ) };
 		TranslateMesh(MeshCone, XMVectorSet(0, 0.5f, 0, 0));
 		MeshAxis = MergeStaticMeshes(MeshAxis, MeshCone);
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
 		m_Object3D_3DGizmoTranslationZ->Create(MeshAxis);
+		m_Object3D_3DGizmoTranslationZ->ComponentTransform.Pitch = XM_PIDIV2;
 	}
 
-	m_GameObject3D_3DGizmoTranslationX = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoTranslationX->ComponentTransform.Roll = -XM_PIDIV2;
-	m_GameObject3D_3DGizmoTranslationX->ComponentRender.PtrObject3D = m_Object3D_3DGizmoTranslationX.get();
-	m_GameObject3D_3DGizmoTranslationX->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoTranslationX->ComponentRender.PtrPS = m_PSGizmo.get();
-
-	m_GameObject3D_3DGizmoTranslationY = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoTranslationY->ComponentRender.PtrObject3D = m_Object3D_3DGizmoTranslationY.get();
-	m_GameObject3D_3DGizmoTranslationY->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoTranslationY->ComponentRender.PtrPS = m_PSGizmo.get();
-
-	m_GameObject3D_3DGizmoTranslationZ = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoTranslationZ->ComponentTransform.Pitch = XM_PIDIV2;
-	m_GameObject3D_3DGizmoTranslationZ->ComponentRender.PtrObject3D = m_Object3D_3DGizmoTranslationZ.get();
-	m_GameObject3D_3DGizmoTranslationZ->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoTranslationZ->ComponentRender.PtrPS = m_PSGizmo.get();
-
-
-	m_Object3D_3DGizmoScalingX = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	if (!m_Object3D_3DGizmoScalingX)
 	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorX) };
+		m_Object3D_3DGizmoScalingX = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorX) };
 		SMesh MeshCube{ GenerateCube(ColorX) };
 		ScaleMesh(MeshCube, XMVectorSet(0.2f, 0.2f, 0.2f, 0));
 		TranslateMesh(MeshCube, XMVectorSet(0, 0.5f, 0, 0));
 		MeshAxis = MergeStaticMeshes(MeshAxis, MeshCube);
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
 		m_Object3D_3DGizmoScalingX->Create(MeshAxis);
+		m_Object3D_3DGizmoScalingX->ComponentTransform.Roll = -XM_PIDIV2;
 	}
 
-	m_Object3D_3DGizmoScalingY = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	if (!m_Object3D_3DGizmoScalingY)
 	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorY) };
+		m_Object3D_3DGizmoScalingY = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorY) };
 		SMesh MeshCube{ GenerateCube(ColorY) };
 		ScaleMesh(MeshCube, XMVectorSet(0.2f, 0.2f, 0.2f, 0));
 		TranslateMesh(MeshCube, XMVectorSet(0, 0.5f, 0, 0));
@@ -752,57 +661,357 @@ void CGame::Create3DGizmos()
 		m_Object3D_3DGizmoScalingY->Create(MeshAxis);
 	}
 
-	m_Object3D_3DGizmoScalingZ = make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this);
+	if (!m_Object3D_3DGizmoScalingZ)
 	{
-		SMesh MeshAxis{ GenerateCylinder(0.05f, 1.0f, 16, ColorZ) };
+		m_Object3D_3DGizmoScalingZ = make_unique<CObject3D>("Gizmo", m_Device.Get(), m_DeviceContext.Get(), this);
+		SMesh MeshAxis{ GenerateCylinder(K3DGizmoRadius, 1.0f, 16, ColorZ) };
 		SMesh MeshCube{ GenerateCube(ColorZ) };
 		ScaleMesh(MeshCube, XMVectorSet(0.2f, 0.2f, 0.2f, 0));
 		TranslateMesh(MeshCube, XMVectorSet(0, 0.5f, 0, 0));
 		MeshAxis = MergeStaticMeshes(MeshAxis, MeshCube);
 		TranslateMesh(MeshAxis, XMVectorSet(0, 0.5f, 0, 0));
 		m_Object3D_3DGizmoScalingZ->Create(MeshAxis);
+		m_Object3D_3DGizmoScalingZ->ComponentTransform.Pitch = XM_PIDIV2;
 	}
 
-	m_GameObject3D_3DGizmoScalingX = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoScalingX->ComponentTransform.Roll = -XM_PIDIV2;
-	m_GameObject3D_3DGizmoScalingX->ComponentRender.PtrObject3D = m_Object3D_3DGizmoScalingX.get();
-	m_GameObject3D_3DGizmoScalingX->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoScalingX->ComponentRender.PtrPS = m_PSGizmo.get();
+	m_Object3D_3DGizmoRotationPitch->ComponentRender.PtrVS =
+		m_Object3D_3DGizmoRotationYaw->ComponentRender.PtrVS = m_Object3D_3DGizmoRotationRoll->ComponentRender.PtrVS =
+		m_Object3D_3DGizmoTranslationX->ComponentRender.PtrVS =
+		m_Object3D_3DGizmoTranslationY->ComponentRender.PtrVS = m_Object3D_3DGizmoTranslationZ->ComponentRender.PtrVS =
+		m_Object3D_3DGizmoScalingX->ComponentRender.PtrVS =
+		m_Object3D_3DGizmoScalingY->ComponentRender.PtrVS = m_Object3D_3DGizmoScalingZ->ComponentRender.PtrVS = m_VSGizmo.get();
 
-	m_GameObject3D_3DGizmoScalingY = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoScalingY->ComponentRender.PtrObject3D = m_Object3D_3DGizmoScalingY.get();
-	m_GameObject3D_3DGizmoScalingY->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoScalingY->ComponentRender.PtrPS = m_PSGizmo.get();
-
-	m_GameObject3D_3DGizmoScalingZ = make_unique<CGameObject3D>("Gizmo");
-	m_GameObject3D_3DGizmoScalingZ->ComponentTransform.Pitch = XM_PIDIV2;
-	m_GameObject3D_3DGizmoScalingZ->ComponentRender.PtrObject3D = m_Object3D_3DGizmoScalingZ.get();
-	m_GameObject3D_3DGizmoScalingZ->ComponentRender.PtrVS = m_VSGizmo.get();
-	m_GameObject3D_3DGizmoScalingZ->ComponentRender.PtrPS = m_PSGizmo.get();
+	m_Object3D_3DGizmoRotationPitch->ComponentRender.PtrPS =
+		m_Object3D_3DGizmoRotationYaw->ComponentRender.PtrPS = m_Object3D_3DGizmoRotationRoll->ComponentRender.PtrPS =
+		m_Object3D_3DGizmoTranslationX->ComponentRender.PtrPS =
+		m_Object3D_3DGizmoTranslationY->ComponentRender.PtrPS = m_Object3D_3DGizmoTranslationZ->ComponentRender.PtrPS =
+		m_Object3D_3DGizmoScalingX->ComponentRender.PtrPS = 
+		m_Object3D_3DGizmoScalingY->ComponentRender.PtrPS = m_Object3D_3DGizmoScalingZ->ComponentRender.PtrPS = m_PSGizmo.get();
 }
 
-CShader* CGame::AddShader()
+void CGame::CreateScreenQuadVertexBuffer()
+{
+	D3D11_BUFFER_DESC BufferDesc{};
+	BufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	BufferDesc.ByteWidth = static_cast<UINT>(sizeof(SScreenQuadVertex) * m_vScreenQuadVertices.size());
+	BufferDesc.CPUAccessFlags = 0;
+	BufferDesc.MiscFlags = 0;
+	BufferDesc.StructureByteStride = 0;
+	BufferDesc.Usage = D3D11_USAGE_DEFAULT;
+
+	D3D11_SUBRESOURCE_DATA SubresourceData{};
+	SubresourceData.pSysMem = &m_vScreenQuadVertices[0];
+	m_Device->CreateBuffer(&BufferDesc, &SubresourceData, &m_ScreenQuadVertexBuffer);
+}
+
+void CGame::SetProjectionMatrices(float FOV, float NearZ, float FarZ)
+{
+	m_NearZ = NearZ;
+	m_FarZ = FarZ;
+
+	m_MatrixProjection = XMMatrixPerspectiveFovLH(FOV, m_WindowSize.x / m_WindowSize.y, m_NearZ, m_FarZ);
+	m_MatrixProjection2D = XMMatrixOrthographicLH(m_WindowSize.x, m_WindowSize.y, 0.0f, 1.0f);
+}
+
+void CGame::SetRenderingFlags(EFlagsRendering Flags)
+{
+	m_eFlagsRendering = Flags;
+}
+
+void CGame::ToggleGameRenderingFlags(EFlagsRendering Flags)
+{
+	m_eFlagsRendering ^= Flags;
+}
+
+void CGame::Set3DGizmoMode(E3DGizmoMode Mode)
+{
+	m_e3DGizmoMode = Mode;
+}
+
+void CGame::SetUniversalRSState()
+{
+	switch (m_eRasterizerState)
+	{
+	case ERasterizerState::CullNone:
+		m_DeviceContext->RSSetState(m_CommonStates->CullNone());
+		break;
+	case ERasterizerState::CullClockwise:
+		m_DeviceContext->RSSetState(m_CommonStates->CullClockwise());
+		break;
+	case ERasterizerState::CullCounterClockwise:
+		m_DeviceContext->RSSetState(m_CommonStates->CullCounterClockwise());
+		break;
+	case ERasterizerState::WireFrame:
+		m_DeviceContext->RSSetState(m_CommonStates->Wireframe());
+		break;
+	default:
+		break;
+	}
+}
+
+void CGame::SetUniversalbUseLighiting()
+{
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::UseLighting))
+	{
+		m_CBPSFlagsData.bUseLighting = TRUE;
+	}
+	m_CBPSFlags->Update();
+}
+
+void CGame::UpdateCBSpace(const XMMATRIX& World)
+{
+	m_CBSpaceWVPData.World = m_CBSpace2DData.World = XMMatrixTranspose(World);
+	m_CBSpaceWVPData.ViewProjection = XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+	m_CBSpaceWVPData.WVP = XMMatrixTranspose(World * m_MatrixView * m_MatrixProjection);
+	m_CBSpaceWVP->Update();
+
+	m_CBSpaceVPData.ViewProjection = XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+	m_CBSpaceVP->Update();
+
+	m_CBSpace2DData.Projection = XMMatrixTranspose(m_MatrixProjection2D);
+	m_CBSpace2D->Update();
+}
+
+void CGame::UpdateCBTessFactorData(const CObject3D::SCBTessFactorData& Data)
+{
+	m_CBTessFactorData = Data;
+	m_CBTessFactor->Update();
+}
+
+void CGame::UpdateCBDisplacementData(const CObject3D::SCBDisplacementData& Data)
+{
+	m_CBDisplacementData = Data;
+	m_CBDisplacement->Update();
+}
+
+void CGame::UpdateCBMaterialData(const CMaterialData& MaterialData)
+{
+	m_CBMaterialData.AmbientColor = MaterialData.AmbientColor();
+	m_CBMaterialData.DiffuseColor = MaterialData.DiffuseColor();
+	m_CBMaterialData.SpecularColor = MaterialData.SpecularColor();
+	m_CBMaterialData.SpecularExponent = MaterialData.SpecularExponent();
+	m_CBMaterialData.SpecularIntensity = MaterialData.SpecularIntensity();
+	m_CBMaterialData.Roughness = MaterialData.Roughness();
+	m_CBMaterialData.Metalness = MaterialData.Metalness();
+
+	uint32_t FlagsHasTexture{};
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::DiffuseTexture) ? 0x01 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::NormalTexture) ? 0x02 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::OpacityTexture) ? 0x04 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::SpecularIntensityTexture) ? 0x08 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::RoughnessTexture) ? 0x10 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::MetalnessTexture) ? 0x20 : 0;
+	FlagsHasTexture += MaterialData.HasTexture(STextureData::EType::AmbientOcclusionTexture) ? 0x40 : 0;
+	// Displacement texture is usually not used in PS
+	m_CBMaterialData.FlagsHasTexture = FlagsHasTexture;
+
+	uint32_t FlagsIsTextureSRGB{};
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::DiffuseTexture) ? 0x01 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::NormalTexture) ? 0x02 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::OpacityTexture) ? 0x04 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::SpecularIntensityTexture) ? 0x08 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::RoughnessTexture) ? 0x10 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::MetalnessTexture) ? 0x20 : 0;
+	FlagsIsTextureSRGB += MaterialData.IsTextureSRGB(STextureData::EType::AmbientOcclusionTexture) ? 0x40 : 0;
+	// Displacement texture is usually not used in PS
+	if (m_EnvironmentTexture) FlagsIsTextureSRGB += m_EnvironmentTexture->IssRGB() ? 0x4000 : 0;
+	if (m_IrradianceTexture) FlagsIsTextureSRGB += m_IrradianceTexture->IssRGB() ? 0x8000 : 0;
+
+	m_CBMaterialData.FlagsIsTextureSRGB = FlagsIsTextureSRGB;
+	m_CBMaterial->Update();
+}
+
+void CGame::CreateStaticSky(float ScalingFactor)
+{
+	m_SkyScalingFactor = ScalingFactor;
+
+	m_Object3DSkySphere = make_unique<CObject3D>("SkySphere", m_Device.Get(), m_DeviceContext.Get(), this);
+	//m_Object3DSkySphere->Create(GenerateSphere(KSkySphereSegmentCount, KSkySphereColorUp, KSkySphereColorBottom));
+	m_Object3DSkySphere->Create(GenerateCubemapSphere(KSkySphereSegmentCount));
+	m_Object3DSkySphere->ComponentTransform.Scaling = XMVectorSet(KSkyDistance, KSkyDistance, KSkyDistance, 0);
+	m_Object3DSkySphere->ComponentRender.PtrVS = m_VSSky.get();
+	m_Object3DSkySphere->ComponentRender.PtrPS = m_PSSky.get();
+	m_Object3DSkySphere->ComponentPhysics.bIsPickable = false;
+	m_Object3DSkySphere->eFlagsRendering = CObject3D::EFlagsRendering::NoCulling | CObject3D::EFlagsRendering::NoLighting;
+}
+
+void CGame::SetDirectionalLight(const XMVECTOR& LightSourcePosition, const XMFLOAT3& Color)
+{
+	m_CBLightData.DirectionalLightDirection = XMVector3Normalize(LightSourcePosition);
+	m_CBLightData.DirectionalLightColor = Color;
+
+	m_CBLight->Update();
+}
+
+void CGame::SetDirectionalLightDirection(const XMVECTOR& LightSourcePosition)
+{
+	m_CBLightData.DirectionalLightDirection = XMVector3Normalize(LightSourcePosition);
+
+	m_CBLight->Update();
+}
+
+void CGame::SetDirectionalLightColor(const XMFLOAT3& Color)
+{
+	m_CBLightData.DirectionalLightColor = Color;
+
+	m_CBLight->Update();
+}
+
+const XMVECTOR& CGame::GetDirectionalLightDirection() const
+{
+	return m_CBLightData.DirectionalLightDirection;
+}
+
+const XMFLOAT3& CGame::GetDirectionalLightColor() const
+{
+	return m_CBLightData.DirectionalLightColor;
+}
+
+void CGame::SetAmbientlLight(const XMFLOAT3& Color, float Intensity)
+{
+	m_CBLightData.AmbientLightColor = Color;
+	m_CBLightData.AmbientLightIntensity = Intensity;
+
+	m_CBLight->Update();
+}
+
+const XMFLOAT3& CGame::GetAmbientLightColor() const
+{
+	return m_CBLightData.AmbientLightColor;
+}
+
+float CGame::GetAmbientLightIntensity() const
+{
+	return m_CBLightData.AmbientLightIntensity;
+}
+
+void CGame::SetExposure(float Value)
+{
+	m_CBLightData.Exposure = Value;
+
+	m_CBLight->Update();
+}
+
+float CGame::GetExposure()
+{
+	return m_CBLightData.Exposure;
+}
+
+bool CGame::InsertCamera(const string& Name)
+{
+	if (m_mapCameraNameToIndex.find(Name) != m_mapCameraNameToIndex.end())
+	{
+		MB_WARN(("이미 존재하는 이름입니다. (" + Name + ")").c_str(), "Camera 생성 실패");
+		return false;
+	}
+
+	if (Name.size() >= KAssetNameMaxLength)
+	{
+		MB_WARN(("이름이 너무 깁니다. (" + Name + ")").c_str(), "Camera 생성 실패");
+		return false;
+	}
+	else if (Name.size() == 0)
+	{
+		MB_WARN("이름은 공백일 수 없습니다.", "Camera 생성 실패");
+		return false;
+	}
+
+	m_vCameras.emplace_back(make_unique<CCamera>(Name));
+	m_mapCameraNameToIndex[Name] = m_vCameras.size() - 1;
+
+	return true;
+}
+
+void CGame::DeleteCamera(const std::string& Name)
+{
+	if (Name == m_vCameras[0]->GetName()) return; // @important
+	if (Name.length() == 0) return;
+	if (m_mapCameraNameToIndex.find(Name) == m_mapCameraNameToIndex.end())
+	{
+		MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Camera 삭제 실패");
+		return;
+	}
+
+	size_t iCamera{ m_mapCameraNameToIndex[Name] };
+	if (iCamera < m_vCameras.size() - 1)
+	{
+		const string& SwappedName{ m_vCameras.back()->GetName() };
+		swap(m_vCameras[iCamera], m_vCameras.back());
+		
+		m_mapCameraNameToIndex[SwappedName] = iCamera;
+	}
+
+	if (IsAnyCameraSelected())
+	{
+		if (Name == GetSelectedCameraName())
+		{
+			DeselectCamera();
+		}
+	}
+
+	m_vCameras.pop_back();
+	m_mapCameraNameToIndex.erase(Name);
+
+	m_PtrCurrentCamera = GetEditorCamera();
+}
+
+void CGame::ClearCameras()
+{
+	CCamera* EditorCamera{ GetEditorCamera() };
+	CCamera::SCameraData EditorCameraData{ EditorCamera->GetData() };
+
+	m_mapCameraNameToIndex.clear();
+	m_vCameras.clear();
+
+	CreateEditorCamera();
+}
+
+CCamera* CGame::GetCamera(const string& Name, bool bShowWarning)
+{
+	if (m_mapCameraNameToIndex.find(Name) == m_mapCameraNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Camera 얻어오기 실패");
+		return nullptr;
+	}
+	return m_vCameras[m_mapCameraNameToIndex.at(Name)].get();
+}
+
+void CGame::CreateEditorCamera()
+{
+	if (GetEditorCamera(false)) return;
+
+	assert(InsertCamera(u8"Editor Camera"));
+	CCamera* EditorCamera{ GetEditorCamera() };
+	EditorCamera->SetData(CCamera::SCameraData(CCamera::EType::FreeLook, XMVectorSet(0, 0, 0, 0), XMVectorSet(0, 0, 1, 0)));
+	EditorCamera->SetEyePosition(XMVectorSet(0, 2, 0, 1));
+
+	m_PtrCurrentCamera = EditorCamera;
+}
+
+CCamera* CGame::GetEditorCamera(bool bShowWarning)
+{
+	return GetCamera(u8"Editor Camera", bShowWarning);
+}
+
+CShader* CGame::AddCustomShader()
 {
 	m_vShaders.emplace_back(make_unique<CShader>(m_Device.Get(), m_DeviceContext.Get()));
 	return m_vShaders.back().get();
 }
 
-CShader* CGame::GetShader(size_t Index)
+CShader* CGame::GetCustomShader(size_t Index) const
 {
 	assert(Index < m_vShaders.size());
 	return m_vShaders[Index].get();
 }
 
-CShader* CGame::GetBaseShader(EBaseShader eShader)
+CShader* CGame::GetBaseShader(EBaseShader eShader) const
 {
 	CShader* Result{};
 	switch (eShader)
 	{
 	case EBaseShader::VSBase:
 		Result = m_VSBase.get();
-		break;
-	case EBaseShader::VSAnimation:
-		Result = m_VSAnimation.get();
 		break;
 	case EBaseShader::VSSky:
 		Result = m_VSSky.get();
@@ -813,8 +1022,32 @@ CShader* CGame::GetBaseShader(EBaseShader eShader)
 	case EBaseShader::VSGizmo:
 		Result = m_VSGizmo.get();
 		break;
+	case EBaseShader::VSScreenQuad:
+		Result = m_VSScreenQuad.get();
+		break;
 	case EBaseShader::VSBase2D:
 		Result = m_VSBase2D.get();
+		break;
+	case EBaseShader::VSNull:
+		Result = m_VSNull.get();
+		break;
+	case EBaseShader::HSTriOdd:
+		Result = m_HSTriOdd.get();
+		break;
+	case EBaseShader::HSTriEven:
+		Result = m_HSTriEven.get();
+		break;
+	case EBaseShader::HSTriInteger:
+		Result = m_HSTriInteger.get();
+		break;
+	case EBaseShader::HSQuadSphere:
+		Result = m_HSQuadSphere.get();
+		break;
+	case EBaseShader::DSTri:
+		Result = m_DSTri.get();
+		break;
+	case EBaseShader::DSQuadSphere:
+		Result = m_DSQuadSphere.get();
 		break;
 	case EBaseShader::GSNormal:
 		Result = m_GSNormal.get();
@@ -825,23 +1058,23 @@ CShader* CGame::GetBaseShader(EBaseShader eShader)
 	case EBaseShader::PSVertexColor:
 		Result = m_PSVertexColor.get();
 		break;
-	case EBaseShader::PSSky:
-		Result = m_PSSky.get();
-		break;
 	case EBaseShader::PSLine:
 		Result = m_PSLine.get();
 		break;
 	case EBaseShader::PSGizmo:
 		Result = m_PSGizmo.get();
 		break;
-	case EBaseShader::PSTerrain:
-		Result = m_PSTerrain.get();
+	case EBaseShader::PSScreenQuad:
+		Result = m_PSScreenQuad.get();
+		break;
+	case EBaseShader::PSSky:
+		Result = m_PSSky.get();
 		break;
 	case EBaseShader::PSBase2D:
 		Result = m_PSBase2D.get();
 		break;
-	case EBaseShader::PSMasking2D:
-		Result = m_PSMasking2D.get();
+	case EBaseShader::PSTest:
+		Result = m_PSTest.get();
 		break;
 	default:
 		assert(Result);
@@ -851,237 +1084,342 @@ CShader* CGame::GetBaseShader(EBaseShader eShader)
 	return Result;
 }
 
-CObject3D* CGame::AddObject3D()
+bool CGame::InsertObject3D(const string& Name)
 {
-	m_vObject3Ds.emplace_back(make_unique<CObject3D>(m_Device.Get(), m_DeviceContext.Get(), this));
-	return m_vObject3Ds.back().get();
+	if (m_mapObject3DNameToIndex.find(Name) != m_mapObject3DNameToIndex.end())
+	{
+		MB_WARN(("이미 존재하는 이름입니다. (" + Name + ")").c_str(), "Object3D 생성 실패");
+		return false;
+	}
+
+	if (Name.size() >= KAssetNameMaxLength)
+	{
+		MB_WARN(("이름이 너무 깁니다. (" + Name + ")").c_str(), "Object3D 생성 실패");
+		return false;
+	}
+	else if (Name.size() == 0)
+	{
+		MB_WARN("이름은 공백일 수 없습니다.", "Object3D 생성 실패");
+		return false;
+	}
+
+	m_vObject3Ds.emplace_back(make_unique<CObject3D>(Name, m_Device.Get(), m_DeviceContext.Get(), this));
+	m_vObject3Ds.back()->ComponentRender.PtrVS = m_VSBase.get();
+	m_vObject3Ds.back()->ComponentRender.PtrPS = m_PSBase.get();
+
+	m_mapObject3DNameToIndex[Name] = m_vObject3Ds.size() - 1;
+
+	return true;
 }
 
-CObject3D* CGame::GetObject3D(size_t Index)
+void CGame::DeleteObject3D(const string& Name)
 {
-	assert(Index < m_vObject3Ds.size());
-	return m_vObject3Ds[Index].get();
+	if (!m_vObject3Ds.size()) return;
+	if (Name.length() == 0) return;
+	if (m_mapObject3DNameToIndex.find(Name) == m_mapObject3DNameToIndex.end())
+	{
+		MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Object3D 삭제 실패");
+		return;
+	}
+
+	size_t iObject3D{ m_mapObject3DNameToIndex[Name] };
+	if (iObject3D < m_vObject3Ds.size() - 1)
+	{
+		const string& SwappedName{ m_vObject3Ds.back()->GetName() };
+		swap(m_vObject3Ds[iObject3D], m_vObject3Ds.back());
+
+		m_mapObject3DNameToIndex[SwappedName] = iObject3D;
+	}
+
+	if (IsAnyObject3DSelected())
+	{
+		if (Name == GetSelectedObject3DName())
+		{
+			DeselectObject3D();
+		}
+	}
+
+	m_mapObject3DNameToIndex.erase(Name);
+	m_vObject3Ds.pop_back();
 }
 
-CObject3DLine* CGame::AddObject3DLine()
+void CGame::ClearObject3Ds()
 {
-	m_vObject3DLines.emplace_back(make_unique<CObject3DLine>(m_Device.Get(), m_DeviceContext.Get()));
-	return m_vObject3DLines.back().get();
+	m_mapObject3DNameToIndex.clear();
+	m_vObject3Ds.clear();
+
+	m_PtrSelectedObject3D = nullptr;
 }
 
-CObject3DLine* CGame::GetObject3DLine(size_t Index)
+CObject3D* CGame::GetObject3D(const string& Name, bool bShowWarning) const
 {
-	assert(Index < m_vObject3DLines.size());
-	return m_vObject3DLines[Index].get();
+	if (m_mapObject3DNameToIndex.find(Name) == m_mapObject3DNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Object3D 얻어오기 실패");
+		return nullptr;
+	}
+	return m_vObject3Ds[m_mapObject3DNameToIndex.at(Name)].get();
 }
 
-CObject2D* CGame::AddObject2D()
+bool CGame::InsertObject3DLine(const string& Name, bool bShowWarning)
 {
-	m_vObject2Ds.emplace_back(make_unique<CObject2D>(m_Device.Get(), m_DeviceContext.Get()));
-	return m_vObject2Ds.back().get();
+	if (m_mapObject3DLineNameToIndex.find(Name) != m_mapObject3DLineNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("이미 존재하는 이름입니다. (" + Name + ")").c_str(), "Object3DLine 생성 실패");
+		return false;
+	}
+
+	if (Name.size() >= KAssetNameMaxLength)
+	{
+		if (bShowWarning) MB_WARN(("이름이 너무 깁니다. (" + Name + ")").c_str(), "Object3DLine 생성 실패");
+		return false;
+	}
+	else if (Name.size() == 0)
+	{
+		if (bShowWarning) MB_WARN("이름은 공백일 수 없습니다.", "Object3DLine 생성 실패");
+		return false;
+	}
+
+	m_vObject3DLines.emplace_back(make_unique<CObject3DLine>(Name, m_Device.Get(), m_DeviceContext.Get()));
+	m_mapObject3DLineNameToIndex[Name] = m_vObject3DLines.size() - 1;
+
+	return true;
 }
 
-CObject2D* CGame::GetObject2D(size_t Index)
+void CGame::ClearObject3DLines()
 {
-	assert(Index < m_vObject2Ds.size());
-	return m_vObject2Ds[Index].get();
+	m_mapObject3DLineNameToIndex.clear();
+	m_vObject3DLines.clear();
 }
 
-CMaterial* CGame::AddMaterial(const CMaterial& Material)
+CObject3DLine* CGame::GetObject3DLine(const string& Name, bool bShowWarning) const
 {
-	if (m_mapMaterialNameToIndex.find(Material.GetName()) != m_mapMaterialNameToIndex.end()) return nullptr;
+	if (m_mapObject3DLineNameToIndex.find(Name) == m_mapObject3DLineNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Object3DLine 얻어오기 실패");
+		return nullptr;
+	}
+	return m_vObject3DLines[m_mapObject3DLineNameToIndex.at(Name)].get();
+}
 
-	m_vMaterials.emplace_back(make_unique<CMaterial>(Material));
+bool CGame::InsertObject2D(const string& Name)
+{
+	if (m_mapObject2DNameToIndex.find(Name) != m_mapObject2DNameToIndex.end())
+	{
+		MB_WARN(("이미 존재하는 이름입니다. (" + Name + ")").c_str(), "Object2D 생성 실패");
+		return false;
+	}
+
+	if (Name.size() >= KAssetNameMaxLength)
+	{
+		MB_WARN(("이름이 너무 깁니다. (" + Name + ")").c_str(), "Object2D 생성 실패");
+		return false;
+	}
+	else if (Name.size() == 0)
+	{
+		MB_WARN("이름은 공백일 수 없습니다.", "Object2D 생성 실패");
+		return false;
+	}
+
+	m_vObject2Ds.emplace_back(make_unique<CObject2D>(Name, m_Device.Get(), m_DeviceContext.Get()));
+	m_mapObject2DNameToIndex[Name] = m_vObject2Ds.size() - 1;
+
+	return true;
+}
+
+void CGame::DeleteObject2D(const std::string& Name)
+{
+	if (!m_vObject2Ds.size()) return;
+	if (Name.length() == 0) return;
+	if (m_mapObject2DNameToIndex.find(Name) == m_mapObject2DNameToIndex.end())
+	{
+		MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Object2D 삭제 실패");
+		return;
+	}
+
+	size_t iObject2D{ m_mapObject2DNameToIndex[Name] };
+	if (iObject2D < m_vObject2Ds.size() - 1)
+	{
+		const string& SwappedName{ m_vObject2Ds.back()->GetName() };
+		swap(m_vObject2Ds[iObject2D], m_vObject2Ds.back());
+
+		m_mapObject2DNameToIndex[SwappedName] = iObject2D;
+	}
+
+	if (IsAnyObject2DSelected())
+	{
+		if (Name == GetSelectedObject2DName())
+		{
+			DeselectObject2D();
+		}
+	}
+
+	m_vObject2Ds.pop_back();
+	m_mapObject2DNameToIndex.erase(Name);
+}
+
+void CGame::ClearObject2Ds()
+{
+	m_mapObject2DNameToIndex.clear();
+	m_vObject2Ds.clear();
+}
+
+CObject2D* CGame::GetObject2D(const string& Name, bool bShowWarning) const
+{
+	if (m_mapObject2DNameToIndex.find(Name) == m_mapObject2DNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Object2D 얻어오기 실패");
+		return nullptr;
+	}
+	return m_vObject2Ds[m_mapObject2DNameToIndex.at(Name)].get();
+}
+
+bool CGame::InsertMaterial(const string& Name, bool bShowWarning)
+{
+	if (m_mapMaterialNameToIndex.find(Name) != m_mapMaterialNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("이미 존재하는 이름입니다. (" + Name + ")").c_str(), "Material 생성 실패");
+		return false;
+	}
+
+	if (Name.size() >= KAssetNameMaxLength)
+	{
+		if (bShowWarning) MB_WARN(("이름이 너무 깁니다. (" + Name + ")").c_str(), "Material 생성 실패");
+		return false;
+	}
+	else if (Name.size() == 0)
+	{
+		if (bShowWarning) MB_WARN("이름은 공백일 수 없습니다.", "Material 생성 실패");
+		return false;
+	}
+
+	m_vMaterialData.emplace_back();
+	m_vMaterialData.back().Name(Name);
+	m_vMaterialTextureSets.emplace_back();
 	
-	m_vMaterialDiffuseTextures.resize(m_vMaterials.size());
-	m_vMaterialNormalTextures.resize(m_vMaterials.size());
-
-	m_mapMaterialNameToIndex[Material.GetName()] = m_vMaterials.size() - 1;
-
-	UpdateMaterial(Material.GetName());
-
-	return m_vMaterials.back().get();
+	m_mapMaterialNameToIndex[Name] = m_vMaterialData.size() - 1;
+	
+	return true;
 }
 
-CMaterial* CGame::GetMaterial(const string& Name)
+bool CGame::InsertMaterialCreateTextures(const CMaterialData& MaterialData, bool bShowWarning)
 {
-	if (m_mapMaterialNameToIndex.find(Name) == m_mapMaterialNameToIndex.end()) return nullptr;
+	if (InsertMaterial(MaterialData.Name(), bShowWarning))
+	{
+		CMaterialData* const Material{ GetMaterial(MaterialData.Name()) };
+		*Material = MaterialData; // copy it!
 
-	return m_vMaterials[m_mapMaterialNameToIndex[Name]].get();
+		CreateMaterialTextures(*Material);
+		return true;
+	}
+	return false;
+}
+
+void CGame::DeleteMaterial(const std::string& Name)
+{
+	if (!m_vMaterialData.size()) return;
+	if (Name.length() == 0) return;
+	if (m_mapMaterialNameToIndex.find(Name) == m_mapMaterialNameToIndex.end())
+	{
+		MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Material 삭제 실패");
+		return;
+	}
+
+	size_t iMaterial{ m_mapMaterialNameToIndex[Name] };
+	if (iMaterial < m_vMaterialData.size() - 1)
+	{
+		const string& SwappedName{ m_vMaterialData.back().Name() };
+
+		swap(m_vMaterialData[iMaterial], m_vMaterialData.back());
+		swap(m_vMaterialTextureSets[iMaterial], m_vMaterialTextureSets.back());
+
+		m_mapMaterialNameToIndex[SwappedName] = iMaterial;
+	}
+
+	m_mapMaterialNameToIndex.erase(Name);
+	m_vMaterialData.pop_back();
+	m_vMaterialTextureSets.pop_back();
+}
+
+void CGame::CreateMaterialTextures(CMaterialData& MaterialData)
+{
+	size_t iMaterial{ m_mapMaterialNameToIndex[MaterialData.Name()] };
+	m_vMaterialTextureSets[iMaterial] = make_unique<CMaterialTextureSet>(m_Device.Get(), m_DeviceContext.Get());
+	m_vMaterialTextureSets[iMaterial]->CreateTextures(MaterialData);
+}
+
+CMaterialData* CGame::GetMaterial(const string& Name, bool bShowWarning)
+{
+	if (m_mapMaterialNameToIndex.find(Name) == m_mapMaterialNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Material 얻어오기 실패");
+		return nullptr;
+	}
+	return &m_vMaterialData[m_mapMaterialNameToIndex.at(Name)];
+}
+
+CMaterialTextureSet* CGame::GetMaterialTextureSet(const std::string& Name, bool bShowWarning)
+{
+	if (m_mapMaterialNameToIndex.find(Name) == m_mapMaterialNameToIndex.end())
+	{
+		if (bShowWarning) MB_WARN(("존재하지 않는 이름입니다. (" + Name + ")").c_str(), "Material 얻어오기 실패");
+		return nullptr;
+	}
+	return m_vMaterialTextureSets[m_mapMaterialNameToIndex.at(Name)].get();
 }
 
 void CGame::ClearMaterials()
 {
-	m_vMaterials.clear();
-	m_vMaterialDiffuseTextures.clear();
-	m_vMaterialNormalTextures.clear();
+	m_vMaterialData.clear();
+	m_vMaterialTextureSets.clear();
 	m_mapMaterialNameToIndex.clear();
 }
 
-size_t CGame::GetMaterialCount()
+size_t CGame::GetMaterialCount() const
 {
-	return m_vMaterials.size();
+	return m_vMaterialData.size();
 }
 
-void CGame::ChangeMaterialName(const string& OldName, const string& NewName)
+bool CGame::ChangeMaterialName(const string& OldName, const string& NewName)
 {
+	if (GetMaterial(NewName, false))
+	{
+		MB_WARN(("[" + NewName + "] 은 이미 존재하는 이름입니다. 다른 이름을 골라주세요.").c_str(), "재질 이름 충돌");
+		return false;
+	}
+
 	size_t iMaterial{ m_mapMaterialNameToIndex[OldName] };
-	CMaterial* Material{ m_vMaterials[iMaterial].get() };
+	CMaterialData* Material{ GetMaterial(OldName) };
 	auto a =m_mapMaterialNameToIndex.find(OldName);
 	
 	m_mapMaterialNameToIndex.erase(OldName);
 	m_mapMaterialNameToIndex.insert(make_pair(NewName, iMaterial));
 
-	Material->SetName(NewName);
+	Material->Name(NewName);
+
+	return true;
 }
 
-void CGame::UpdateMaterial(const string& Name)
-{
-	if (m_mapMaterialNameToIndex.find(Name) == m_mapMaterialNameToIndex.end()) return;
-
-	size_t iMaterial{ m_mapMaterialNameToIndex[Name] };
-	const CMaterial* Material{ m_vMaterials[iMaterial].get() };
-	if (!Material->HasTexture()) return;
-
-	if (Material->HasDiffuseTexture())
-	{
-		m_vMaterialDiffuseTextures[iMaterial].release();
-		m_vMaterialDiffuseTextures[iMaterial] = make_unique<CMaterialTexture>(m_Device.Get(), m_DeviceContext.Get());
-
-		if (Material->IsDiffuseTextureEmbedded())
-		{
-			m_vMaterialDiffuseTextures[iMaterial]->CreateTextureFromMemory(Material->GetDiffuseTextureRawData());
-		}
-		else
-		{
-			m_vMaterialDiffuseTextures[iMaterial]->CreateTextureFromFile(Material->GetDiffuseTextureFileName(), Material->ShouldGenerateAutoMipMap());
-		}
-	}
-
-	if (Material->HasNormalTexture())
-	{
-		m_vMaterialNormalTextures[iMaterial].release();
-		m_vMaterialNormalTextures[iMaterial] = make_unique<CMaterialTexture>(m_Device.Get(), m_DeviceContext.Get());
-
-		if (Material->IsNormalTextureEmbedded())
-		{
-			m_vMaterialNormalTextures[iMaterial]->CreateTextureFromMemory(Material->GetNormalTextureRawData());
-		}
-		else
-		{
-			m_vMaterialNormalTextures[iMaterial]->CreateTextureFromFile(Material->GetNormalTextureFileName(), Material->ShouldGenerateAutoMipMap());
-		}
-	}
-}
-
-CMaterialTexture* CGame::AddMaterialDiffuseTexture(const string& Name)
-{
-	if (m_mapMaterialNameToIndex.find(Name) != m_mapMaterialNameToIndex.end()) return nullptr;
-
-	m_vMaterialDiffuseTextures.emplace_back(make_unique<CMaterialTexture>(m_Device.Get(), m_DeviceContext.Get()));
-
-	return m_vMaterialDiffuseTextures.back().get();
-}
-
-CMaterialTexture* CGame::GetMaterialDiffuseTexture(const string& Name)
+ID3D11ShaderResourceView* CGame::GetMaterialTextureSRV(STextureData::EType eType, const string& Name) const
 {
 	assert(m_mapMaterialNameToIndex.find(Name) != m_mapMaterialNameToIndex.end());
-	size_t iMaterial{ m_mapMaterialNameToIndex[Name] };
-	if (m_vMaterialDiffuseTextures.size() <= iMaterial) return nullptr;
+	size_t iMaterial{ m_mapMaterialNameToIndex.at(Name) };
 
-	return m_vMaterialDiffuseTextures[iMaterial].get();
+	if (m_vMaterialTextureSets[iMaterial]) return m_vMaterialTextureSets[iMaterial]->GetTextureSRV(eType);
+	return nullptr;
 }
 
-CMaterialTexture* CGame::AddMaterialNormalTexture(const string& Name)
+void CGame::NotifyMouseLeftDown()
 {
-	if (m_mapMaterialNameToIndex.find(Name) != m_mapMaterialNameToIndex.end()) return nullptr;
-
-	m_vMaterialNormalTextures.emplace_back(make_unique<CMaterialTexture>(m_Device.Get(), m_DeviceContext.Get()));
-
-	return m_vMaterialNormalTextures.back().get();
+	m_bLeftButtonPressedOnce = true;
 }
 
-CMaterialTexture* CGame::GetMaterialNormalTexture(const string& Name)
+void CGame::NotifyMouseLeftUp()
 {
-	assert(m_mapMaterialNameToIndex.find(Name) != m_mapMaterialNameToIndex.end());
-	size_t iMaterial{ m_mapMaterialNameToIndex[Name] };
-	if (m_vMaterialNormalTextures.size() <= iMaterial) return nullptr;
-
-	return m_vMaterialNormalTextures[iMaterial].get();
+	m_bLeftButtonPressedOnce = false;
 }
 
-CGameObject3D* CGame::AddGameObject3D(const string& Name)
-{
-	assert(m_umapGameObject3DNameToIndex.find(Name) == m_umapGameObject3DNameToIndex.end());
-
-	m_vGameObject3Ds.emplace_back(make_unique<CGameObject3D>(Name));
-	m_vGameObject3Ds.back()->ComponentRender.PtrVS = m_VSBase.get();
-	m_vGameObject3Ds.back()->ComponentRender.PtrPS = m_PSBase.get();
-
-	m_umapGameObject3DNameToIndex[Name] = m_vGameObject3Ds.size() - 1;
-
-	return m_vGameObject3Ds.back().get();
-}
-
-CGameObject3D* CGame::GetGameObject3D(const string& Name)
-{
-	assert(m_umapGameObject3DNameToIndex.find(Name) != m_umapGameObject3DNameToIndex.end());
-	return m_vGameObject3Ds[m_umapGameObject3DNameToIndex[Name]].get();
-}
-
-CGameObject3D* CGame::GetGameObject3D(size_t Index)
-{
-	assert(Index < m_vGameObject3Ds.size());
-	return m_vGameObject3Ds[Index].get();
-}
-
-CGameObject3DLine* CGame::AddGameObject3DLine(const string& Name)
-{
-	assert(m_umapGameObject3DLineNameToIndex.find(Name) == m_umapGameObject3DLineNameToIndex.end());
-
-	m_vGameObject3DLines.emplace_back(make_unique<CGameObject3DLine>(Name));
-
-	m_umapGameObject3DLineNameToIndex[Name] = m_vGameObject3DLines.size() - 1;
-
-	return m_vGameObject3DLines.back().get();
-}
-
-CGameObject3DLine* CGame::GetGameObject3DLine(const string& Name)
-{
-	assert(m_umapGameObject3DLineNameToIndex.find(Name) != m_umapGameObject3DLineNameToIndex.end());
-	return m_vGameObject3DLines[m_umapGameObject3DLineNameToIndex[Name]].get();
-}
-
-CGameObject3DLine* CGame::GetGameObject3DLine(size_t Index)
-{
-	assert(Index < m_vGameObject3DLines.size());
-	return m_vGameObject3DLines[Index].get();
-}
-
-CGameObject2D* CGame::AddGameObject2D(const string& Name)
-{
-	assert(m_umapGameObject2DNameToIndex.find(Name) == m_umapGameObject2DNameToIndex.end());
-
-	m_vGameObject2Ds.emplace_back(make_unique<CGameObject2D>(Name));
-
-	m_umapGameObject2DNameToIndex[Name] = m_vGameObject2Ds.size() - 1;
-
-	return m_vGameObject2Ds.back().get();
-}
-
-CGameObject2D* CGame::GetGameObject2D(const string& Name)
-{
-	assert(m_umapGameObject2DNameToIndex.find(Name) != m_umapGameObject2DNameToIndex.end());
-	return m_vGameObject2Ds[m_umapGameObject2DNameToIndex[Name]].get();
-}
-
-CGameObject2D* CGame::GetGameObject2D(size_t Index)
-{
-	assert(Index < m_vGameObject2Ds.size());
-	return m_vGameObject2Ds[Index].get();
-}
-
-void CGame::Pick()
+bool CGame::Pick()
 {
 	CastPickingRay();
 
@@ -1091,610 +1429,298 @@ void CGame::Pick()
 
 	PickTriangle();
 
-	if (EFLAG_HAS_NO(m_eFlagsGameRendering, EFlagsGameRendering::Use3DGizmos))
-	{
-		if (m_PtrPickedGameObject3D) m_PtrCapturedPickedGameObject3D =  m_PtrPickedGameObject3D;
-	}
-}
-
-void CGame::ReleasePickedGameObject()
-{
-	m_PtrCapturedPickedGameObject3D = nullptr;
-}
-
-void CGame::CastPickingRay()
-{
-	const Mouse::State& MouseState{ m_Mouse->GetState() };
-
-	float ViewSpaceRayDirectionX{ (MouseState.x / (m_WindowSize.x / 2.0f) - 1.0f) / XMVectorGetX(m_MatrixProjection.r[0]) };
-	float ViewSpaceRayDirectionY{ (-(MouseState.y / (m_WindowSize.y / 2.0f) - 1.0f)) / XMVectorGetY(m_MatrixProjection.r[1]) };
-	static float ViewSpaceRayDirectionZ{ 1.0f };
-
-	static XMVECTOR ViewSpaceRayOrigin{ XMVectorSet(0, 0, 0, 1) };
-	XMVECTOR ViewSpaceRayDirection{ XMVectorSet(ViewSpaceRayDirectionX, ViewSpaceRayDirectionY, ViewSpaceRayDirectionZ, 0) };
-
-	XMMATRIX MatrixViewInverse{ XMMatrixInverse(nullptr, m_MatrixView) };
-	m_PickingRayWorldSpaceOrigin = XMVector3TransformCoord(ViewSpaceRayOrigin, MatrixViewInverse);
-	m_PickingRayWorldSpaceDirection = XMVector3TransformNormal(ViewSpaceRayDirection, MatrixViewInverse);
-}
-
-void CGame::PickBoundingSphere()
-{
-	m_PtrPickedGameObject3D = nullptr;
-
-	XMVECTOR T{ KVectorGreatest };
-	for (auto& i : m_vGameObject3Ds)
-	{
-		auto* GO3D{ i.get() };
-		if (GO3D->ComponentPhysics.bIsPickable)
-		{
-			if (GO3D->ComponentPhysics.bIgnoreBoundingSphere)
-			{
-				m_PtrPickedGameObject3D = GO3D;
-
-				if (PickTriangle())
-				{
-					break;
-				}
-				else
-				{
-					m_PtrPickedGameObject3D = nullptr;
-				}
-			}
-			else
-			{
-				XMVECTOR NewT{ KVectorGreatest };
-				if (IntersectRaySphere(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection,
-					GO3D->ComponentPhysics.BoundingSphere.Radius, GO3D->ComponentTransform.Translation + GO3D->ComponentPhysics.BoundingSphere.CenterOffset, &NewT))
-				{
-					if (XMVector3Less(NewT, T))
-					{
-						T = NewT;
-						m_PtrPickedGameObject3D = GO3D;
-					}
-				}
-			}
-		}
-	}
-}
-
-bool CGame::PickTriangle()
-{
-	XMVECTOR T{ KVectorGreatest };
-	if (m_PtrPickedGameObject3D)
-	{
-		if (!m_PtrPickedGameObject3D->ComponentRender.PtrObject3D) return false;
-
-		// Pick only static models' triangle.
-		if (m_PtrPickedGameObject3D->ComponentRender.PtrObject3D->m_Model.bIsModelAnimated) return false;
-
-		const XMMATRIX& World{ m_PtrPickedGameObject3D->ComponentTransform.MatrixWorld };
-		for (auto& Mesh : m_PtrPickedGameObject3D->ComponentRender.PtrObject3D->m_Model.vMeshes)
-		{
-			for (auto& Triangle : Mesh.vTriangles)
-			{
-				XMVECTOR V0{ Mesh.vVertices[Triangle.I0].Position };
-				XMVECTOR V1{ Mesh.vVertices[Triangle.I1].Position };
-				XMVECTOR V2{ Mesh.vVertices[Triangle.I2].Position };
-				V0 = XMVector3TransformCoord(V0, World);
-				V1 = XMVector3TransformCoord(V1, World);
-				V2 = XMVector3TransformCoord(V2, World);
-
-				XMVECTOR NewT{};
-				if (IntersectRayTriangle(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection, V0, V1, V2, &NewT))
-				{
-					if (XMVector3Less(NewT, T))
-					{
-						T = NewT;
-
-						XMVECTOR N{ CalculateTriangleNormal(V0, V1, V2) };
-
-						m_PickedTriangleV0 = V0 + N * 0.01f;
-						m_PickedTriangleV1 = V1 + N * 0.01f;
-						m_PickedTriangleV2 = V2 + N * 0.01f;
-
-						return true;
-					}
-				}
-			}
-		}
-	}
+	if (m_PtrPickedObject3D) return true;
 	return false;
 }
 
-void CGame::SelectTerrain(bool bShouldEdit, bool bIsLeftButton, float DeltaHeightFactor)
+const string& CGame::GetPickedObject3DName() const
 {
-	if (!m_Terrain) return;
+	assert(m_PtrPickedObject3D);
+	return m_PtrPickedObject3D->GetName();
+}
 
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::UseTerrainSelector))
+void CGame::SelectObject3D(const string& Name)
+{
+	m_PtrSelectedObject3D = GetObject3D(Name);
+	if (m_PtrSelectedObject3D)
 	{
-		CastPickingRay();
-
-		m_Terrain->SelectTerrain(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection, bShouldEdit, bIsLeftButton, DeltaHeightFactor);
+		const XMVECTOR& BSTransaltion{ m_PtrSelectedObject3D->ComponentPhysics.BoundingSphere.CenterOffset };
+		const XMVECTOR KObjectTranslation{ m_PtrSelectedObject3D->ComponentTransform.Translation + BSTransaltion };
+		m_CapturedGizmoTranslation = KObjectTranslation;
 	}
 }
 
-void CGame::SetTerrainEditMode(ETerrainEditMode Mode)
+void CGame::DeselectObject3D()
 {
-	m_Terrain->SetEditMode(Mode);
+	m_PtrSelectedObject3D = nullptr;
 }
 
-void CGame::SetTerrainMaskingLayer(EMaskingLayer eLayer)
+bool CGame::IsAnyObject3DSelected() const
 {
-	m_Terrain->SetMaskingLayer(eLayer);
+	return (m_PtrSelectedObject3D) ? true : false;
 }
 
-void CGame::SetTerrainMaskingAttenuation(float Attenuation)
+CObject3D* CGame::GetSelectedObject3D()
 {
-	m_Terrain->SetMaskingAttenuation(Attenuation);
+	return m_PtrSelectedObject3D;
 }
 
-void CGame::SetTerrainMaskingSize(float Size)
+const string& CGame::GetSelectedObject3DName() const
 {
-	m_Terrain->SetMaskingRadius(Size);
+	assert(m_PtrSelectedObject3D);
+	return m_PtrSelectedObject3D->GetName();
 }
 
-void CGame::BeginRendering(const FLOAT* ClearColor)
+void CGame::SelectObject2D(const string& Name)
 {
-	m_DeviceContext->ClearRenderTargetView(m_RenderTargetView.Get(), Colors::CornflowerBlue);
-	m_DeviceContext->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-	ID3D11SamplerState* SamplerState{ m_CommonStates->LinearWrap() };
-	m_DeviceContext->PSSetSamplers(0, 1, &SamplerState);
-	m_DeviceContext->DSSetSamplers(0, 1, &SamplerState);
-
-	m_DeviceContext->OMSetBlendState(m_CommonStates->NonPremultiplied(), nullptr, 0xFFFFFFFF);
-
-	SetUniversalRasterizerState();
-
-	m_MatrixView = XMMatrixLookAtLH(m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition, 
-		m_vCameras[m_CurrentCameraIndex].m_CameraData.FocusPosition,
-		m_vCameras[m_CurrentCameraIndex].m_CameraData.UpDirection);
+	m_PtrSelectedObject2D = GetObject2D(Name);
 }
 
-void CGame::Animate()
+void CGame::DeselectObject2D()
 {
-	for (auto& i : m_vGameObject3Ds)
+	m_PtrSelectedObject2D = nullptr;
+}
+
+bool CGame::IsAnyObject2DSelected() const
+{
+	return (m_PtrSelectedObject2D) ? true : false;
+}
+
+CObject2D* CGame::GetSelectedObject2D()
+{
+	return m_PtrSelectedObject2D;
+}
+
+const string& CGame::GetSelectedObject2DName() const
+{
+	assert(m_PtrSelectedObject2D);
+	return m_PtrSelectedObject2D->GetName();
+}
+
+void CGame::SelectCamera(const string& Name)
+{
+	m_PtrSelectedCamera = GetCamera(Name);
+}
+
+void CGame::DeselectCamera()
+{
+	m_PtrSelectedCamera = nullptr;
+}
+
+bool CGame::IsAnyCameraSelected() const
+{
+	return (m_PtrSelectedCamera) ? true : false;
+}
+
+CCamera* CGame::GetSelectedCamera()
+{
+	return m_PtrSelectedCamera;
+}
+
+const string& CGame::GetSelectedCameraName() const
+{
+	assert(m_PtrSelectedCamera);
+	return m_PtrSelectedCamera->GetName();
+}
+
+CCamera* CGame::GetCurrentCamera()
+{
+	return m_PtrCurrentCamera;
+}
+
+void CGame::Select3DGizmos()
+{
+	if (EFLAG_HAS_NO(m_eFlagsRendering, EFlagsRendering::Use3DGizmos)) return;
+	if (!IsAnyObject3DSelected()) return;
+
+	XMVECTOR* pTranslation{ &m_PtrSelectedObject3D->ComponentTransform.Translation };
+	XMVECTOR* pScaling{ &m_PtrSelectedObject3D->ComponentTransform.Scaling };
+	float* pPitch{ &m_PtrSelectedObject3D->ComponentTransform.Pitch };
+	float* pYaw{ &m_PtrSelectedObject3D->ComponentTransform.Yaw };
+	float* pRoll{ &m_PtrSelectedObject3D->ComponentTransform.Roll };
+
+	// Calculate scalar IAW the distance from the camera
+	m_3DGizmoDistanceScalar = XMVectorGetX(XMVector3Length(m_PtrCurrentCamera->GetEyePosition() - *pTranslation)) * 0.1f;
+	m_3DGizmoDistanceScalar = pow(m_3DGizmoDistanceScalar, 0.7f);
+
+	// Translate 3D gizmos
+	const XMVECTOR& BSTransaltion{ m_PtrSelectedObject3D->ComponentPhysics.BoundingSphere.CenterOffset };
+	const XMVECTOR KGizmoTranslation{ *pTranslation + BSTransaltion };
+	m_Object3D_3DGizmoTranslationX->ComponentTransform.Translation =
+		m_Object3D_3DGizmoTranslationY->ComponentTransform.Translation = m_Object3D_3DGizmoTranslationZ->ComponentTransform.Translation =
+		m_Object3D_3DGizmoRotationPitch->ComponentTransform.Translation =
+		m_Object3D_3DGizmoRotationYaw->ComponentTransform.Translation = m_Object3D_3DGizmoRotationRoll->ComponentTransform.Translation =
+		m_Object3D_3DGizmoScalingX->ComponentTransform.Translation =
+		m_Object3D_3DGizmoScalingY->ComponentTransform.Translation = m_Object3D_3DGizmoScalingZ->ComponentTransform.Translation = KGizmoTranslation;
+
+	if (IsGizmoSelected())
 	{
-		if (i->ComponentRender.PtrObject3D) i->ComponentRender.PtrObject3D->Animate();
-	}
-}
+		int DeltaX{ m_CapturedMouseState.x - m_PrevCapturedMouseX };
+		int DeltaY{ m_CapturedMouseState.y - m_PrevCapturedMouseY };
+		int DeltaSum{ DeltaY - DeltaX };
 
-void CGame::Draw(float DeltaTime)
-{
-	m_DeviceContext->RSSetViewports(1, &m_vViewports[0]);
+		float DistanceObejctCamera{ abs(XMVectorGetX(m_CapturedGizmoTranslation - GetCurrentCamera()->GetEyePosition())) };
+		if (DistanceObejctCamera < K3DGizmoCameraDistanceThreshold) DistanceObejctCamera = K3DGizmoCameraDistanceThreshold;
+		const float KDeltaFactor{ pow(DistanceObejctCamera, K3DGizmoDistanceFactorExponent) };
 
-	m_cbPSBaseEyeData.EyePosition = m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition;
+		float TranslationX{ XMVectorGetX(*pTranslation) };
+		float TranslationY{ XMVectorGetY(*pTranslation) };
+		float TranslationZ{ XMVectorGetZ(*pTranslation) };
+		float ScalingX{ XMVectorGetX(*pScaling) };
+		float ScalingY{ XMVectorGetY(*pScaling) };
+		float ScalingZ{ XMVectorGetZ(*pScaling) };
 
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawWireFrame))
-	{
-		m_eRasterizerState = ERasterizerState::WireFrame;
-	}
-	else
-	{
-		m_eRasterizerState = ERasterizerState::CullCounterClockwise;
-	}
-
-	for (auto& i : m_vGameObject3Ds)
-	{
-		if (i->ComponentRender.bIsTransparent) continue;
-
-		UpdateGameObject3D(i.get());
-		DrawGameObject3D(i.get());
-
-		if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawBoundingSphere))
+		switch (m_e3DGizmoMode)
 		{
-			DrawGameObject3DBoundingSphere(i.get());
-		}
-	}
-
-	for (auto& i : m_vGameObject3Ds)
-	{
-		if (!i->ComponentRender.bIsTransparent) continue;
-
-		UpdateGameObject3D(i.get());
-		DrawGameObject3D(i.get());
-		
-		if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawBoundingSphere))
-		{
-			DrawGameObject3DBoundingSphere(i.get());
-		}
-	}
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawMiniAxes))
-	{
-		DrawMiniAxes();
-	}
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawPickingData))
-	{
-		DrawPickingRay();
-
-		DrawPickedTriangle();
-	}
-
-	if (m_SkyData.bIsDataSet)
-	{
-		DrawSky(DeltaTime);
-	}
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::Use3DGizmos))
-	{
-		Draw3DGizmos();
-	}
-
-	DrawTerrain();
-
-	DrawGameObject3DLines();
-
-	DrawGameObject2Ds();
-}
-
-void CGame::UpdateGameObject3D(CGameObject3D* PtrGO)
-{
-	if (!PtrGO) return;
-
-	assert(PtrGO->ComponentRender.PtrVS);
-	assert(PtrGO->ComponentRender.PtrPS);
-
-	CShader* VS{ PtrGO->ComponentRender.PtrVS };
-	CShader* PS{ PtrGO->ComponentRender.PtrPS };
-
-	m_cbVSSpaceData.World = XMMatrixTranspose(PtrGO->ComponentTransform.MatrixWorld);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(PtrGO->ComponentTransform.MatrixWorld * m_MatrixView * m_MatrixProjection);
-	PtrGO->UpdateWorldMatrix();
-
-	if (EFLAG_HAS(PtrGO->eFlagsGameObject3DRendering, EFlagsGameObject3DRendering::UseRawVertexColor))
-	{
-		PS = m_PSVertexColor.get();
-	}
-
-	SetUniversalbUseLighiting();
-	if (EFLAG_HAS(PtrGO->eFlagsGameObject3DRendering, EFlagsGameObject3DRendering::NoLighting))
-	{
-		m_cbPSBaseFlagsData.bUseLighting = FALSE;
-	}
-
-	if (EFLAG_HAS(PtrGO->eFlagsGameObject3DRendering, EFlagsGameObject3DRendering::NoTexture))
-	{
-		m_cbPSBaseFlagsData.bUseTexture = FALSE;
-	}
-	else
-	{
-		m_cbPSBaseFlagsData.bUseTexture = TRUE;
-	}
-	
-	VS->Use();
-	VS->UpdateAllConstantBuffers();
-
-	PS->Use();
-	PS->UpdateAllConstantBuffers();
-}
-
-void CGame::DrawGameObject3D(CGameObject3D* PtrGO)
-{
-	if (!PtrGO) return;
-	if (!PtrGO->ComponentRender.PtrObject3D) return;
-
-	if (PtrGO->ComponentRender.PtrObject3D->ShouldTessellate())
-	{
-		CShader* HS{};
-		switch (m_eTessellationMode)
-		{
-		case ETessellationMode::FractionalOdd:
-			HS = m_HSBezier.get();
+		case E3DGizmoMode::Translation:
+			switch (m_e3DGizmoSelectedAxis)
+			{
+			case E3DGizmoAxis::AxisX:
+				*pTranslation = XMVectorSetX(*pTranslation, TranslationX - DeltaSum * KTranslationDelta * KDeltaFactor);
+				break;
+			case E3DGizmoAxis::AxisY:
+				*pTranslation = XMVectorSetY(*pTranslation, TranslationY - DeltaSum * KTranslationDelta * KDeltaFactor);
+				break;
+			case E3DGizmoAxis::AxisZ:
+				*pTranslation = XMVectorSetZ(*pTranslation, TranslationZ - DeltaSum * KTranslationDelta * KDeltaFactor);
+				break;
+			default:
+				break;
+			}
 			break;
-		case ETessellationMode::FractionalEven:
-			HS = m_HSBezierEven.get();
+		case E3DGizmoMode::Rotation:
+			switch (m_e3DGizmoSelectedAxis)
+			{
+			case E3DGizmoAxis::AxisX:
+				*pPitch -= DeltaSum * KRotation360To2PI * KRotationDelta * KDeltaFactor;
+				break;
+			case E3DGizmoAxis::AxisY:
+				*pYaw -= DeltaSum * KRotation360To2PI * KRotationDelta * KDeltaFactor;
+				break;
+			case E3DGizmoAxis::AxisZ:
+				*pRoll -= DeltaSum * KRotation360To2PI * KRotationDelta * KDeltaFactor;
+				break;
+			default:
+				break;
+			}
 			break;
-		case ETessellationMode::Integer:
-			HS = m_HSBezierInteger.get();
+		case E3DGizmoMode::Scaling:
+		{
+			switch (m_e3DGizmoSelectedAxis)
+			{
+			case E3DGizmoAxis::AxisX:
+				*pScaling = XMVectorSetX(*pScaling, ScalingX - DeltaSum * KScalingDelta * KDeltaFactor);
+				break;
+			case E3DGizmoAxis::AxisY:
+				*pScaling = XMVectorSetY(*pScaling, ScalingY - DeltaSum * KScalingDelta * KDeltaFactor);
+				break;
+			case E3DGizmoAxis::AxisZ:
+				*pScaling = XMVectorSetZ(*pScaling, ScalingZ - DeltaSum * KScalingDelta * KDeltaFactor);
+				break;
+			default:
+				break;
+			}
+		}
 			break;
 		default:
 			break;
 		}
-		
-		HS->Use();
-		m_cbHSTessFactorData.TessFactor = m_TessFactor;
-		HS->UpdateConstantBuffer(0);
-		
-		m_DSBezier->Use();
-		m_cbDSSpaceData.VP = GetTransposedVPMatrix();
-		m_DSBezier->UpdateConstantBuffer(0);
+		m_PtrSelectedObject3D->UpdateWorldMatrix();
 	}
 	else
 	{
-		m_DeviceContext->HSSetShader(nullptr, nullptr, 0);
-		m_DeviceContext->DSSetShader(nullptr, nullptr, 0);
-	}
+		// Gizmo is not selected.
+		CastPickingRay();
 
-	if (EFLAG_HAS(PtrGO->eFlagsGameObject3DRendering, EFlagsGameObject3DRendering::NoCulling))
-	{
-		m_DeviceContext->RSSetState(m_CommonStates->CullNone());
-	}
-	else
-	{
-		SetUniversalRasterizerState();
-	}
-
-	if (EFLAG_HAS(PtrGO->eFlagsGameObject3DRendering, EFlagsGameObject3DRendering::NoDepthComparison))
-	{
-		m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthNone(), 0);
-	}
-	else
-	{
-		m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthDefault(), 0);
-	}
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawNormals))
-	{
-		m_GSNormal->Use();
-		
-		UpdateGSSpace();
-
-		PtrGO->ComponentRender.PtrObject3D->Draw();
-
-		m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
-	}
-	else
-	{
-		PtrGO->ComponentRender.PtrObject3D->Draw();
-	}
-}
-
-void CGame::DrawGameObject3DBoundingSphere(CGameObject3D* PtrGO)
-{
-	m_VSBase->Use();
-
-	XMMATRIX Translation{ XMMatrixTranslationFromVector(PtrGO->ComponentTransform.Translation + PtrGO->ComponentPhysics.BoundingSphere.CenterOffset) };
-	XMMATRIX Scaling{ XMMatrixScaling(PtrGO->ComponentPhysics.BoundingSphere.Radius,
-		PtrGO->ComponentPhysics.BoundingSphere.Radius, PtrGO->ComponentPhysics.BoundingSphere.Radius) };
-	XMMATRIX World{ Scaling * Translation };
-	m_cbVSSpaceData.World = XMMatrixTranspose(World);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(World * m_MatrixView * m_MatrixProjection);
-	m_VSBase->UpdateConstantBuffer(0);
-
-	m_DeviceContext->RSSetState(m_CommonStates->Wireframe());
-
-	m_Object3DBoundingSphere->Draw();
-
-	SetUniversalRasterizerState();
-}
-
-void CGame::DrawGameObject3DLines()
-{
-	m_VSLine->Use();
-	m_PSLine->Use();
-
-	for (auto& i : m_vGameObject3DLines)
-	{
-		CGameObject3DLine* GOLine{ i.get() };
-
-		if (GOLine->ComponentRender.PtrObject3DLine)
+		switch (m_e3DGizmoMode)
 		{
-			if (!GOLine->bIsVisible) continue;
-
-			GOLine->UpdateWorldMatrix();
-
-			m_cbVSSpaceData.World = XMMatrixTranspose(GOLine->ComponentTransform.MatrixWorld);
-			m_cbVSSpaceData.WVP = XMMatrixTranspose(GOLine->ComponentTransform.MatrixWorld * m_MatrixView * m_MatrixProjection);
-			m_VSLine->UpdateConstantBuffer(0);
-
-			GOLine->ComponentRender.PtrObject3DLine->Draw();
-		}
-	}
-}
-
-void CGame::DrawGameObject2Ds()
-{
-	m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthNone(), 0);
-	m_DeviceContext->OMSetBlendState(m_CommonStates->NonPremultiplied(), nullptr, 0xFFFFFFFF);
-	
-	m_cbVS2DSpaceData.Projection = XMMatrixTranspose(m_MatrixProjection2D);
-
-	m_VSBase2D->Use();
-	m_PSBase2D->Use();
-
-	for (auto& i : m_vGameObject2Ds)
-	{
-		CGameObject2D* GO2D{ i.get() };
-
-		if (GO2D->ComponentRender.PtrObject2D)
-		{
-			if (!GO2D->bIsVisible) continue;
-
-			GO2D->UpdateWorldMatrix();
-			m_cbVS2DSpaceData.World = XMMatrixTranspose(GO2D->ComponentTransform.MatrixWorld);
-			m_VSBase2D->UpdateConstantBuffer(0);
-
-			/*
-			if (GO2D->ComponentRender.PtrTexture)
+		case E3DGizmoMode::Translation:
+			m_bIsGizmoHovered = true;
+			if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoTranslationX.get(), E3DGizmoAxis::AxisX))
 			{
-				GO2D->ComponentRender.PtrTexture->Use();
-				m_cbPS2DFlagsData.bUseTexture = TRUE;
-				m_PSBase2D->UpdateConstantBuffer(0);
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
+			}
+			else if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoTranslationY.get(), E3DGizmoAxis::AxisY))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
+			}
+			else if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoTranslationZ.get(), E3DGizmoAxis::AxisZ))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
 			}
 			else
 			{
-				m_cbPS2DFlagsData.bUseTexture = FALSE;
-				m_PSBase2D->UpdateConstantBuffer(0);
+				m_bIsGizmoHovered = false;
 			}
-			*/
+			break;
+		case E3DGizmoMode::Rotation:
+			m_bIsGizmoHovered = true;
+			if (ShouldSelectRotationGizmo(m_Object3D_3DGizmoRotationPitch.get(), E3DGizmoAxis::AxisX))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
+			}
+			else if (ShouldSelectRotationGizmo(m_Object3D_3DGizmoRotationYaw.get(), E3DGizmoAxis::AxisY))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
+			}
+			else if (ShouldSelectRotationGizmo(m_Object3D_3DGizmoRotationRoll.get(), E3DGizmoAxis::AxisZ))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
+			}
+			else
+			{
+				m_bIsGizmoHovered = false;
+			}
+			break;
+		case E3DGizmoMode::Scaling:
+			m_bIsGizmoHovered = true;
+			if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoScalingX.get(), E3DGizmoAxis::AxisX))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
+			}
+			else if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoScalingY.get(), E3DGizmoAxis::AxisY))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
+			}
+			else if (ShouldSelectTranslationScalingGizmo(m_Object3D_3DGizmoScalingZ.get(), E3DGizmoAxis::AxisZ))
+			{
+				m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
+			}
+			else
+			{
+				m_bIsGizmoHovered = false;
+			}
+			break;
+		default:
+			break;
+		}
 
-			GO2D->ComponentRender.PtrObject2D->Draw();
+		if (m_bIsGizmoHovered && m_CapturedMouseState.leftButton)
+		{
+			m_bIsGizmoSelected = true;
 		}
 	}
 
-	m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthDefault(), 0);
+	m_PrevCapturedMouseX = m_CapturedMouseState.x;
+	m_PrevCapturedMouseY = m_CapturedMouseState.y;
 }
 
-void CGame::DrawMiniAxes()
+void CGame::Deselect3DGizmos()
 {
-	m_DeviceContext->RSSetViewports(1, &m_vViewports[1]);
-
-	for (auto& i : m_vGameObject3DMiniAxes)
-	{
-		UpdateGameObject3D(i.get());
-		DrawGameObject3D(i.get());
-
-		i->ComponentTransform.Translation = 
-			m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition +
-			m_vCameras[m_CurrentCameraIndex].m_CameraData.Forward;
-
-		i->UpdateWorldMatrix();
-	}
-
-	m_DeviceContext->RSSetViewports(1, &m_vViewports[0]);
+	m_bIsGizmoSelected = false;
 }
 
-void CGame::UpdatePickingRay()
+bool CGame::IsGizmoHovered() const
 {
-	m_Object3DLinePickingRay->vVertices[0].Position = m_PickingRayWorldSpaceOrigin;
-	m_Object3DLinePickingRay->vVertices[1].Position = m_PickingRayWorldSpaceOrigin + m_PickingRayWorldSpaceDirection * KPickingRayLength;
-	m_Object3DLinePickingRay->Update();
+	return m_bIsGizmoHovered;
 }
 
-void CGame::DrawPickingRay()
+bool CGame::IsGizmoSelected() const
 {
-	m_VSLine->Use();
-	m_cbVSSpaceData.World = XMMatrixTranspose(KMatrixIdentity);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(KMatrixIdentity * m_MatrixView * m_MatrixProjection);
-	m_VSLine->UpdateConstantBuffer(0);
-
-	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
-	
-	m_PSLine->Use();
-
-	m_Object3DLinePickingRay->Draw();
+	return m_bIsGizmoSelected;
 }
 
-void CGame::DrawPickedTriangle()
-{
-	m_VSBase->Use();
-	m_cbVSSpaceData.World = XMMatrixTranspose(KMatrixIdentity);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(KMatrixIdentity * m_MatrixView * m_MatrixProjection);
-	m_VSBase->UpdateConstantBuffer(0);
-
-	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
-	
-	m_PSVertexColor->Use();
-
-	m_Object3DPickedTriangle->m_Model.vMeshes[0].vVertices[0].Position = m_PickedTriangleV0;
-	m_Object3DPickedTriangle->m_Model.vMeshes[0].vVertices[1].Position = m_PickedTriangleV1;
-	m_Object3DPickedTriangle->m_Model.vMeshes[0].vVertices[2].Position = m_PickedTriangleV2;
-	m_Object3DPickedTriangle->UpdateMeshBuffer();
-
-	m_Object3DPickedTriangle->Draw();
-}
-
-void CGame::DrawSky(float DeltaTime)
-{
-	// Elapse SkyTime
-	m_cbPSSkyTimeData.SkyTime += KSkyTimeFactorAbsolute * DeltaTime;
-	if (m_cbPSSkyTimeData.SkyTime > 1.0f) m_cbPSSkyTimeData.SkyTime = 0.0f;
-
-	// Update directional light source position
-	static float DirectionalLightRoll{};
-	if (m_cbPSSkyTimeData.SkyTime <= 0.25f)
-	{
-		DirectionalLightRoll = XM_2PI * (m_cbPSSkyTimeData.SkyTime + 0.25f);
-	}
-	else if (m_cbPSSkyTimeData.SkyTime > 0.25f && m_cbPSSkyTimeData.SkyTime <= 0.75f)
-	{
-		DirectionalLightRoll = XM_2PI * (m_cbPSSkyTimeData.SkyTime - 0.25f);
-	}
-	else
-	{
-		DirectionalLightRoll = XM_2PI * (m_cbPSSkyTimeData.SkyTime - 0.75f);
-	}
-	XMVECTOR DirectionalLightSourcePosition{ XMVector3TransformCoord(XMVectorSet(1, 0, 0, 1), XMMatrixRotationRollPitchYaw(0, 0, DirectionalLightRoll)) };
-	SetDirectionalLight(DirectionalLightSourcePosition);
-
-	// SkySphere
-	{
-		m_GameObject3DSkySphere->ComponentTransform.Scaling = XMVectorSet(KSkyDistance, KSkyDistance, KSkyDistance, 0);
-		m_GameObject3DSkySphere->ComponentTransform.Translation = m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition;
-	}
-
-	// Sun
-	{
-		float SunRoll{ XM_2PI * m_cbPSSkyTimeData.SkyTime - XM_PIDIV2 };
-		XMVECTOR Offset{ XMVector3TransformCoord(XMVectorSet(KSkyDistance, 0, 0, 1), XMMatrixRotationRollPitchYaw(0, 0, SunRoll)) };
-		m_GameObject3DSun->ComponentTransform.Translation = m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition + Offset;
-		m_GameObject3DSun->ComponentTransform.Roll = SunRoll;
-	}
-
-	// Moon
-	{
-		float MoonRoll{ XM_2PI * m_cbPSSkyTimeData.SkyTime + XM_PIDIV2 };
-		XMVECTOR Offset{ XMVector3TransformCoord(XMVectorSet(KSkyDistance, 0, 0, 1), XMMatrixRotationRollPitchYaw(0, 0, MoonRoll)) };
-		m_GameObject3DMoon->ComponentTransform.Translation = m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition + Offset;
-		m_GameObject3DMoon->ComponentTransform.Roll = (MoonRoll > XM_2PI) ? (MoonRoll - XM_2PI) : MoonRoll;
-	}
-
-	// Cloud
-	{
-		float CloudYaw{ XM_2PI * m_cbPSSkyTimeData.SkyTime };
-		XMVECTOR Offset{ XMVector3TransformCoord(XMVectorSet(KSkyDistance, 0, 0, 1), XMMatrixRotationRollPitchYaw(0, CloudYaw, XM_PIDIV4)) };
-		m_GameObject3DCloud->ComponentTransform.Translation = m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition + Offset;
-		m_GameObject3DCloud->ComponentTransform.Yaw = CloudYaw;
-		m_GameObject3DCloud->ComponentTransform.Roll = XM_PIDIV4;
-	}
-
-	UpdateGameObject3D(m_GameObject3DSkySphere.get());
-	DrawGameObject3D(m_GameObject3DSkySphere.get());
-
-	UpdateGameObject3D(m_GameObject3DSun.get());
-	DrawGameObject3D(m_GameObject3DSun.get());
-
-	UpdateGameObject3D(m_GameObject3DMoon.get());
-	DrawGameObject3D(m_GameObject3DMoon.get());
-
-	UpdateGameObject3D(m_GameObject3DCloud.get());
-	DrawGameObject3D(m_GameObject3DCloud.get());
-}
-
-void CGame::DrawTerrain()
-{
-	if (!m_Terrain) return;
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::TessellateTerrain))
-	{
-		m_HSBezier->Use();
-		m_cbHSTessFactorData.TessFactor = m_TessFactor;
-		m_HSBezier->UpdateConstantBuffer(0);
-
-		m_DSBezier->Use();
-		m_cbDSSpaceData.VP = GetTransposedVPMatrix();
-		m_DSBezier->UpdateConstantBuffer(0);
-
-		m_Terrain->Draw(
-			EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::UseTerrainSelector),
-			EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawNormals)
-		);
-
-		m_DeviceContext->HSSetShader(nullptr, nullptr, 0);
-		m_DeviceContext->DSSetShader(nullptr, nullptr, 0);
-	}
-	else
-	{
-		m_Terrain->Draw(
-			EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::UseTerrainSelector),
-			EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawNormals)
-		);
-	}
-	
-
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::DrawTerrainMaskingTexture))
-	{
-		m_DeviceContext->RSSetViewports(1, &m_vViewports[2]);
-		m_Terrain->DrawMaskingTexture();
-
-		m_DeviceContext->RSSetViewports(1, &m_vViewports[0]);
-	}
-}
-
-bool CGame::ShouldSelectRotationGizmo(CGameObject3D* Gizmo, E3DGizmoAxis Axis)
+bool CGame::ShouldSelectRotationGizmo(const CObject3D* const Gizmo, E3DGizmoAxis Axis)
 {
 	XMVECTOR PlaneNormal{};
 	switch (Axis)
@@ -1730,284 +1756,610 @@ bool CGame::ShouldSelectRotationGizmo(CGameObject3D* Gizmo, E3DGizmoAxis Axis)
 	return false;
 }
 
-bool CGame::ShouldSelectTranslationScalingGizmo(CGameObject3D* Gizmo, E3DGizmoAxis Axis)
+bool CGame::ShouldSelectTranslationScalingGizmo(const CObject3D* const Gizmo, E3DGizmoAxis Axis)
 {
-	XMVECTOR Center{};
+	static constexpr float KGizmoLengthFactor{ 1.1875f };
+	static constexpr float KGizmoRaidus{ 0.05859375f };
+	XMVECTOR CylinderSpaceRayOrigin{ m_PickingRayWorldSpaceOrigin - Gizmo->ComponentTransform.Translation };
+	XMVECTOR CylinderSpaceRayDirection{ m_PickingRayWorldSpaceDirection };
 	switch (Axis)
 	{
 	case E3DGizmoAxis::None:
 		return false;
 		break;
 	case E3DGizmoAxis::AxisX:
-		Center = Gizmo->ComponentTransform.Translation + XMVectorSet(0.5f * m_3DGizmoDistanceScalar, 0, 0, 1);
+		{
+			XMMATRIX RotationMatrix{ XMMatrixRotationZ(XM_PIDIV2) };
+			CylinderSpaceRayOrigin = XMVector3TransformCoord(CylinderSpaceRayOrigin, RotationMatrix);
+			CylinderSpaceRayDirection = XMVector3TransformNormal(CylinderSpaceRayDirection, RotationMatrix);
+			if (IntersectRayCylinder(CylinderSpaceRayOrigin, CylinderSpaceRayDirection, 
+				KGizmoLengthFactor * m_3DGizmoDistanceScalar, KGizmoRaidus * m_3DGizmoDistanceScalar)) return true;
+		}
 		break;
 	case E3DGizmoAxis::AxisY:
-		Center = Gizmo->ComponentTransform.Translation + XMVectorSet(0, 0.5f * m_3DGizmoDistanceScalar, 0, 1);
+		if (IntersectRayCylinder(CylinderSpaceRayOrigin, CylinderSpaceRayDirection, 
+			KGizmoLengthFactor * m_3DGizmoDistanceScalar, KGizmoRaidus * m_3DGizmoDistanceScalar)) return true;
 		break;
 	case E3DGizmoAxis::AxisZ:
-		Center = Gizmo->ComponentTransform.Translation + XMVectorSet(0, 0, 0.5f * m_3DGizmoDistanceScalar, 1);
+		{
+			XMMATRIX RotationMatrix{ XMMatrixRotationX(-XM_PIDIV2) };
+			CylinderSpaceRayOrigin = XMVector3TransformCoord(CylinderSpaceRayOrigin, RotationMatrix);
+			CylinderSpaceRayDirection = XMVector3TransformNormal(CylinderSpaceRayDirection, RotationMatrix);
+			if (IntersectRayCylinder(CylinderSpaceRayOrigin, CylinderSpaceRayDirection, 
+				KGizmoLengthFactor * m_3DGizmoDistanceScalar, KGizmoRaidus * m_3DGizmoDistanceScalar)) return true;
+		}
 		break;
 	default:
 		break;
 	}
-
-	if (IntersectRaySphere(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection, 0.5f * m_3DGizmoDistanceScalar, Center, nullptr)) return true;
-
 	return false;
 }
 
-void CGame::Draw3DGizmos()
+void CGame::DeselectAll()
 {
-	const Mouse::State& MouseState{ m_Mouse->GetState() };
-	static int PrevMouseX{ MouseState.x };
-	static int PrevMouseY{ MouseState.y };
+	DeselectObject3D();
+	DeselectObject2D();
+	DeselectCamera();
+	Deselect3DGizmos();
+}
 
-	if (!MouseState.leftButton)
+void CGame::CastPickingRay()
+{
+	float ViewSpaceRayDirectionX{ (m_CapturedMouseState.x / (m_WindowSize.x / 2.0f) - 1.0f) / XMVectorGetX(m_MatrixProjection.r[0]) };
+	float ViewSpaceRayDirectionY{ (-(m_CapturedMouseState.y / (m_WindowSize.y / 2.0f) - 1.0f)) / XMVectorGetY(m_MatrixProjection.r[1]) };
+	static float ViewSpaceRayDirectionZ{ 1.0f };
+
+	static XMVECTOR ViewSpaceRayOrigin{ XMVectorSet(0, 0, 0, 1) };
+	XMVECTOR ViewSpaceRayDirection{ XMVectorSet(ViewSpaceRayDirectionX, ViewSpaceRayDirectionY, ViewSpaceRayDirectionZ, 0) };
+
+	XMMATRIX MatrixViewInverse{ XMMatrixInverse(nullptr, m_MatrixView) };
+	m_PickingRayWorldSpaceOrigin = XMVector3TransformCoord(ViewSpaceRayOrigin, MatrixViewInverse);
+	m_PickingRayWorldSpaceDirection = XMVector3TransformNormal(ViewSpaceRayDirection, MatrixViewInverse);
+}
+
+void CGame::PickBoundingSphere()
+{
+	m_vObject3DPickingCandidates.clear();
+	m_PtrPickedObject3D = nullptr;
+
+	XMVECTOR T{ KVectorGreatest };
+	for (auto& i : m_vObject3Ds)
 	{
-		m_bIsGizmoSelected = false;
-	}
-
-	if (MouseState.middleButton)
-	{
-		m_PtrCapturedPickedGameObject3D = nullptr;
-	}
-
-	if (m_PtrCapturedPickedGameObject3D)
-	{
-		m_3DGizmoDistanceScalar =
-			XMVectorGetX(XMVector3Length(m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition -
-				m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation)) * 0.1f;
-		m_3DGizmoDistanceScalar = pow(m_3DGizmoDistanceScalar, 0.7f);
-
-		if (m_bIsGizmoSelected)
+		auto* Object3D{ i.get() };
+		if (Object3D->ComponentPhysics.bIsPickable)
 		{
-			if (MouseState.leftButton)
+			XMVECTOR NewT{ KVectorGreatest };
+			if (IntersectRaySphere(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection,
+				Object3D->ComponentPhysics.BoundingSphere.Radius, Object3D->ComponentTransform.Translation + Object3D->ComponentPhysics.BoundingSphere.CenterOffset, &NewT))
 			{
-				int DeltaX{ MouseState.x - PrevMouseX };
-				int DeltaY{ MouseState.y - PrevMouseY };
-
-				int DeltaSum{ DeltaX + DeltaY };
-
-				float TranslationX{ XMVectorGetX(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation) };
-				float TranslationY{ XMVectorGetY(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation) };
-				float TranslationZ{ XMVectorGetZ(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation) };
-
-				float ScalingX{ XMVectorGetX(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling) };
-				float ScalingY{ XMVectorGetY(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling) };
-				float ScalingZ{ XMVectorGetZ(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling) };
-
-				switch (m_e3DGizmoMode)
-				{
-				case E3DGizmoMode::Translation:
-					switch (m_e3DGizmoSelectedAxis)
-					{
-					case E3DGizmoAxis::AxisX:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation =
-							XMVectorSetX(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation, TranslationX - DeltaSum * CGame::KTranslationUnit);
-						break;
-					case E3DGizmoAxis::AxisY:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation =
-							XMVectorSetY(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation, TranslationY - DeltaSum * CGame::KTranslationUnit);
-						break;
-					case E3DGizmoAxis::AxisZ:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation =
-							XMVectorSetZ(m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation, TranslationZ - DeltaSum * CGame::KTranslationUnit);
-						break;
-					default:
-						break;
-					}
-
-					Draw3DGizmoTranslations(m_e3DGizmoSelectedAxis);
-
-					break;
-				case E3DGizmoMode::Rotation:
-					switch (m_e3DGizmoSelectedAxis)
-					{
-					case E3DGizmoAxis::AxisX:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Pitch -= DeltaSum * CGame::KRotation360To2PI;
-						break;
-					case E3DGizmoAxis::AxisY:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Yaw -= DeltaSum * CGame::KRotation360To2PI;
-						break;
-					case E3DGizmoAxis::AxisZ:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Roll -= DeltaSum * CGame::KRotation360To2PI;
-						break;
-					default:
-						break;
-					}
-
-					Draw3DGizmoRotations(m_e3DGizmoSelectedAxis);
-					break;
-				case E3DGizmoMode::Scaling:
-					switch (m_e3DGizmoSelectedAxis)
-					{
-					case E3DGizmoAxis::AxisX:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling =
-							XMVectorSetX(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling, ScalingX - DeltaSum * CGame::KScalingUnit);
-						break;
-					case E3DGizmoAxis::AxisY:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling =
-							XMVectorSetY(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling, ScalingY - DeltaSum * CGame::KScalingUnit);
-						break;
-					case E3DGizmoAxis::AxisZ:
-						m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling =
-							XMVectorSetZ(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling, ScalingZ - DeltaSum * CGame::KScalingUnit);
-						break;
-					default:
-						break;
-					}
-
-					ScalingX = XMVectorGetX(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling);
-					ScalingY = XMVectorGetY(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling);
-					ScalingZ = XMVectorGetZ(m_PtrCapturedPickedGameObject3D->ComponentTransform.Scaling);
-
-					m_PtrCapturedPickedGameObject3D->ComponentPhysics.BoundingSphere.Radius = 
-						max(max(ScalingX, ScalingY), ScalingZ);
-
-					Draw3DGizmoScalings(m_e3DGizmoSelectedAxis);
-
-					break;
-				default:
-					break;
-				}
-				
+				m_vObject3DPickingCandidates.emplace_back(Object3D, NewT);
 			}
+		}
+	}
+}
+
+bool CGame::PickTriangle()
+{
+	XMVECTOR T{ KVectorGreatest };
+	if (m_PtrPickedObject3D == nullptr)
+	{
+		for (SObject3DPickingCandiate& Candidate : m_vObject3DPickingCandidates)
+		{
+			Candidate.bHasFailedPickingTest = true;
+			XMMATRIX WorldMatrix{ Candidate.PtrObject3D->ComponentTransform.MatrixWorld };
+			for (const SMesh& Mesh : Candidate.PtrObject3D->GetModel().vMeshes)
+			{
+				for (const STriangle& Triangle : Mesh.vTriangles)
+				{
+					XMVECTOR V0{ Mesh.vVertices[Triangle.I0].Position };
+					XMVECTOR V1{ Mesh.vVertices[Triangle.I1].Position };
+					XMVECTOR V2{ Mesh.vVertices[Triangle.I2].Position };
+					V0 = XMVector3TransformCoord(V0, WorldMatrix);
+					V1 = XMVector3TransformCoord(V1, WorldMatrix);
+					V2 = XMVector3TransformCoord(V2, WorldMatrix);
+
+					XMVECTOR NewT{};
+					if (IntersectRayTriangle(m_PickingRayWorldSpaceOrigin, m_PickingRayWorldSpaceDirection, V0, V1, V2, &NewT))
+					{
+						if (XMVector3Less(NewT, T))
+						{
+							T = NewT;
+
+							Candidate.bHasFailedPickingTest = false;
+							Candidate.T = NewT;
+
+							XMVECTOR N{ CalculateTriangleNormal(V0, V1, V2) };
+
+							m_PickedTriangleV0 = V0 + N * 0.01f;
+							m_PickedTriangleV1 = V1 + N * 0.01f;
+							m_PickedTriangleV2 = V2 + N * 0.01f;
+
+							continue;
+						}
+					}
+				}
+			}
+		}
+
+		vector<SObject3DPickingCandiate> vFilteredCandidates{};
+		for (const SObject3DPickingCandiate& Candidate : m_vObject3DPickingCandidates)
+		{
+			if (Candidate.bHasFailedPickingTest == false) vFilteredCandidates.emplace_back(Candidate);
+		}
+		if (!vFilteredCandidates.empty())
+		{
+			XMVECTOR TCmp{ KVectorGreatest };
+			for (const SObject3DPickingCandiate& FilteredCandidate : vFilteredCandidates)
+			{
+				if (XMVector3Less(FilteredCandidate.T, TCmp))
+				{
+					m_PtrPickedObject3D = FilteredCandidate.PtrObject3D;
+				}
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+void CGame::BeginRendering(const FLOAT* ClearColor)
+{
+	m_DeviceContext->OMSetRenderTargets(1, m_DeviceRTV.GetAddressOf(), m_DepthStencilView.Get());
+
+	m_DeviceContext->ClearRenderTargetView(m_DeviceRTV.Get(), Colors::CornflowerBlue);
+	m_DeviceContext->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+	ID3D11SamplerState* LinearWrapSampler{ m_CommonStates->LinearWrap() };
+	ID3D11SamplerState* LinearClampSampler{ m_CommonStates->LinearClamp() };
+	m_DeviceContext->PSSetSamplers(0, 1, &LinearWrapSampler);
+	m_DeviceContext->PSSetSamplers(1, 1, &LinearClampSampler);
+	m_DeviceContext->DSSetSamplers(0, 1, &LinearWrapSampler); // @important: in order to use displacement mapping
+
+	m_DeviceContext->OMSetBlendState(m_CommonStates->NonPremultiplied(), nullptr, 0xFFFFFFFF);
+
+	SetUniversalRSState();
+
+	XMVECTOR EyePosition{ m_PtrCurrentCamera->GetEyePosition() };
+	XMVECTOR FocusPosition{ m_PtrCurrentCamera->GetFocusPosition() };
+	XMVECTOR UpDirection{ m_PtrCurrentCamera->GetUpDirection() };
+	m_MatrixView = XMMatrixLookAtLH(EyePosition, FocusPosition, UpDirection);
+
+	if (m_EnvironmentTexture) m_EnvironmentTexture->Use();
+	if (m_IrradianceTexture) m_IrradianceTexture->Use();
+	if (m_PrefilteredRadianceTexture) m_PrefilteredRadianceTexture->Use();
+	if (m_IntegratedBRDFTexture) m_IntegratedBRDFTexture->Use();
+}
+
+void CGame::Update()
+{
+	// Calculate time
+	m_TimeNow = m_Clock.now().time_since_epoch().count();
+	if (m_TimePrev == 0) m_TimePrev = m_TimeNow;
+	m_DeltaTimeF = static_cast<float>((m_TimeNow - m_TimePrev) * 0.000'000'001);
+
+	if (m_TimeNow > m_PreviousFrameTime + 1'000'000'000)
+	{
+		m_FPS = m_FrameCount;
+		m_FrameCount = 0;
+		m_PreviousFrameTime = m_TimeNow;
+	}
+
+	// Capture inputs
+	m_CapturedKeyboardState = GetKeyState();
+	m_CapturedMouseState = GetMouseState();
+
+	// Process keyboard inputs
+	if (m_CapturedKeyboardState.LeftAlt && m_CapturedKeyboardState.Q)
+	{
+		Destroy();
+		return;
+	}
+	if (m_CapturedKeyboardState.Escape)
+	{
+		DeselectAll();
+	}
+	if (!ImGui::IsAnyItemActive())
+	{
+		if (m_CapturedKeyboardState.W)
+		{
+			m_PtrCurrentCamera->Move(CCamera::EMovementDirection::Forward, m_DeltaTimeF * m_CameraMovementFactor);
+		}
+		if (m_CapturedKeyboardState.S)
+		{
+			m_PtrCurrentCamera->Move(CCamera::EMovementDirection::Backward, m_DeltaTimeF * m_CameraMovementFactor);
+		}
+		if (m_CapturedKeyboardState.A  && !m_CapturedKeyboardState.LeftControl)
+		{
+			m_PtrCurrentCamera->Move(CCamera::EMovementDirection::Leftward, m_DeltaTimeF * m_CameraMovementFactor);
+		}
+		if (m_CapturedKeyboardState.D)
+		{
+			m_PtrCurrentCamera->Move(CCamera::EMovementDirection::Rightward, m_DeltaTimeF * m_CameraMovementFactor);
+		}
+		if (m_CapturedKeyboardState.D1)
+		{
+			Set3DGizmoMode(E3DGizmoMode::Translation);
+		}
+		if (m_CapturedKeyboardState.D2)
+		{
+			Set3DGizmoMode(E3DGizmoMode::Rotation);
+		}
+		if (m_CapturedKeyboardState.D3)
+		{
+			Set3DGizmoMode(E3DGizmoMode::Scaling);
+		}
+		if (m_CapturedKeyboardState.Delete)
+		{
+			// Object3D
+			if (IsAnyObject3DSelected())
+			{
+				DeleteObject3D(GetSelectedObject3DName());
+				DeselectObject3D();
+			}
+		}
+	}
+
+	// Process moue inputs
+	static int PrevMouseX{ m_CapturedMouseState.x };
+	static int PrevMouseY{ m_CapturedMouseState.y };
+	if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
+	{
+		if (m_CapturedMouseState.rightButton) ImGui::SetWindowFocus(nullptr);
+
+		if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow))
+		{
+			Select3DGizmos();
+			
+			if (m_bLeftButtonPressedOnce)
+			{
+				if (Pick() && !IsGizmoSelected())
+				{
+					DeselectAll();
+
+					SelectObject3D(GetPickedObject3DName());
+				}
+				m_bLeftButtonPressedOnce = false;
+			}
+
+			if (!m_CapturedMouseState.leftButton) Deselect3DGizmos();
+			if (m_CapturedMouseState.rightButton)
+			{
+				DeselectAll();
+			}
+		}
+
+		if (m_CapturedMouseState.x != PrevMouseX || m_CapturedMouseState.y != PrevMouseY)
+		{
+			if (m_CapturedMouseState.middleButton)
+			//if (m_CapturedMouseState.rightButton)
+			{
+				m_PtrCurrentCamera->Rotate(m_CapturedMouseState.x - PrevMouseX, m_CapturedMouseState.y - PrevMouseY, m_DeltaTimeF);
+			}
+
+			PrevMouseX = m_CapturedMouseState.x;
+			PrevMouseY = m_CapturedMouseState.y;
+		}
+	}
+
+	m_TimePrev = m_TimeNow;
+	++m_FrameCount;
+}
+
+void CGame::Draw()
+{
+	if (m_IsDestroyed) return;
+
+	m_CBEditorTimeData.NormalizedTime += m_DeltaTimeF;
+	m_CBEditorTimeData.NormalizedTimeHalfSpeed += m_DeltaTimeF * 0.5f;
+	if (m_CBEditorTimeData.NormalizedTime > 1.0f) m_CBEditorTimeData.NormalizedTime = 0.0f;
+	if (m_CBEditorTimeData.NormalizedTimeHalfSpeed > 1.0f) m_CBEditorTimeData.NormalizedTimeHalfSpeed = 0.0f;
+	m_CBEditorTime->Update();
+
+	m_DeviceContext->RSSetViewports(1, &m_vViewports[0]);
+
+	m_CBLightData.EyePosition = m_PtrCurrentCamera->GetEyePosition();
+	m_CBLight->Update();
+
+	m_CBPSFlagsData.EnvironmentTextureMipLevels = (m_EnvironmentTexture) ? m_EnvironmentTexture->GetMipLevels() : 0;
+	m_CBPSFlagsData.PrefilteredRadianceTextureMipLevels = (m_PrefilteredRadianceTexture) ? m_PrefilteredRadianceTexture->GetMipLevels() : 0;
+	m_CBPSFlagsData.bUsePhysicallyBasedRendering = EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::UsePhysicallyBasedRendering);
+	m_CBPSFlags->Update();
+
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawWireFrame))
+	{
+		m_eRasterizerState = ERasterizerState::WireFrame;
+	}
+	else
+	{
+		m_eRasterizerState = ERasterizerState::CullCounterClockwise;
+	}
+
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawMiniAxes))
+	{
+		DrawMiniAxes();
+	}
+
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawPickingData))
+	{
+		DrawPickingRay();
+
+		DrawPickedTriangle();
+	}
+
+	DrawObject3DLines();
+
+	DrawSky(m_DeltaTimeF);
+
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawNormals))
+	{
+		UpdateCBSpace();
+		m_GSNormal->Use();
+	}
+
+	// Opaque Object3Ds
+	for (auto& Object3D : m_vObject3Ds)
+	{
+		if (Object3D->ComponentRender.bIsTransparent) continue;
+
+		UpdateObject3D(Object3D.get());
+		DrawObject3D(Object3D.get());
+
+		if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawBoundingSphere))
+		{
+			DrawObject3DBoundingSphere(Object3D.get());
+		}
+	}
+
+	// Transparent Object3Ds
+	for (auto& Object3D : m_vObject3Ds)
+	{
+		if (!Object3D->ComponentRender.bIsTransparent) continue;
+
+		UpdateObject3D(Object3D.get());
+		DrawObject3D(Object3D.get());
+
+		if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawBoundingSphere))
+		{
+			DrawObject3DBoundingSphere(Object3D.get());
+		}
+	}
+
+	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
+
+	DrawObject2Ds();
+}
+
+void CGame::UpdateObject3D(CObject3D* const PtrObject3D)
+{
+	if (!PtrObject3D) return;
+
+	PtrObject3D->UpdateWorldMatrix();
+	UpdateCBSpace(PtrObject3D->ComponentTransform.MatrixWorld);
+
+	SetUniversalbUseLighiting();
+
+	m_CBPSFlagsData.bUseLighting = EFLAG_HAS_NO(PtrObject3D->eFlagsRendering, CObject3D::EFlagsRendering::NoLighting);
+	m_CBPSFlagsData.bUseTexture = EFLAG_HAS_NO(PtrObject3D->eFlagsRendering, CObject3D::EFlagsRendering::NoTexture);
+	m_CBPSFlags->Update();
+
+	assert(PtrObject3D->ComponentRender.PtrVS);
+	assert(PtrObject3D->ComponentRender.PtrPS);
+	CShader* VS{ PtrObject3D->ComponentRender.PtrVS };
+	CShader* PS{ PtrObject3D->ComponentRender.PtrPS };
+	if (EFLAG_HAS(PtrObject3D->eFlagsRendering, CObject3D::EFlagsRendering::UseRawVertexColor))
+	{
+		PS = m_PSVertexColor.get();
+	}
+
+	VS->Use();
+	PS->Use();
+}
+
+void CGame::DrawObject3D(const CObject3D* const PtrObject3D, bool bIgnoreInstances, bool bIgnoreOwnTexture)
+{
+	if (!PtrObject3D) return;
+
+	if (PtrObject3D->ShouldTessellate())
+	{
+		UpdateCBTessFactorData(PtrObject3D->GetTessFactorData());
+		UpdateCBDisplacementData(PtrObject3D->GetDisplacementData());
+
+		if (PtrObject3D->IsPatches())
+		{
+			m_VSNull->Use();
+
+			m_HSQuadSphere->Use();
+			m_DSQuadSphere->Use();
+
+			m_PSTest->Use();
 		}
 		else
 		{
-			CastPickingRay();
-
-			switch (m_e3DGizmoMode)
+			switch (PtrObject3D->TessellationType())
 			{
-			case E3DGizmoMode::Translation:
-				m_GameObject3D_3DGizmoTranslationX->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoTranslationY->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoTranslationZ->ComponentTransform.Translation = m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation;
-
-				m_bIsGizmoSelected = true;
-				if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoTranslationX.get(), E3DGizmoAxis::AxisX))
-				{
-					Draw3DGizmoTranslations(E3DGizmoAxis::AxisX);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
-				}
-				else if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoTranslationY.get(), E3DGizmoAxis::AxisY))
-				{
-					Draw3DGizmoTranslations(E3DGizmoAxis::AxisY);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
-				}
-				else if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoTranslationZ.get(), E3DGizmoAxis::AxisZ))
-				{
-					Draw3DGizmoTranslations(E3DGizmoAxis::AxisZ);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
-				}
-				else
-				{
-					Draw3DGizmoTranslations(E3DGizmoAxis::None);
-					m_bIsGizmoSelected = false;
-				}
-
+			case CObject3D::ETessellationType::FractionalOdd:
+				m_HSTriOdd->Use();
 				break;
-			case E3DGizmoMode::Rotation:
-				m_GameObject3D_3DGizmoRotationPitch->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoRotationYaw->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoRotationRoll->ComponentTransform.Translation = m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation;
-
-				m_bIsGizmoSelected = true;
-				if (ShouldSelectRotationGizmo(m_GameObject3D_3DGizmoRotationPitch.get(), E3DGizmoAxis::AxisX))
-				{
-					Draw3DGizmoRotations(E3DGizmoAxis::AxisX);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
-				}
-				else if (ShouldSelectRotationGizmo(m_GameObject3D_3DGizmoRotationYaw.get(), E3DGizmoAxis::AxisY))
-				{
-					Draw3DGizmoRotations(E3DGizmoAxis::AxisY);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
-				}
-				else if (ShouldSelectRotationGizmo(m_GameObject3D_3DGizmoRotationRoll.get(), E3DGizmoAxis::AxisZ))
-				{
-					Draw3DGizmoRotations(E3DGizmoAxis::AxisZ);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
-				}
-				else
-				{
-					Draw3DGizmoRotations(E3DGizmoAxis::None);
-					m_bIsGizmoSelected = false;
-				}
-
+			case CObject3D::ETessellationType::FractionalEven:
+				m_HSTriEven->Use();
 				break;
-			case E3DGizmoMode::Scaling:
-				m_GameObject3D_3DGizmoScalingX->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoScalingY->ComponentTransform.Translation =
-					m_GameObject3D_3DGizmoScalingZ->ComponentTransform.Translation = m_PtrCapturedPickedGameObject3D->ComponentTransform.Translation;
-
-				m_bIsGizmoSelected = true;
-				if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoScalingX.get(), E3DGizmoAxis::AxisX))
-				{
-					Draw3DGizmoScalings(E3DGizmoAxis::AxisX);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisX;
-				}
-				else if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoScalingY.get(), E3DGizmoAxis::AxisY))
-				{
-					Draw3DGizmoScalings(E3DGizmoAxis::AxisY);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisY;
-				}
-				else if (ShouldSelectTranslationScalingGizmo(m_GameObject3D_3DGizmoScalingZ.get(), E3DGizmoAxis::AxisZ))
-				{
-					Draw3DGizmoScalings(E3DGizmoAxis::AxisZ);
-					m_e3DGizmoSelectedAxis = E3DGizmoAxis::AxisZ;
-				}
-				else
-				{
-					Draw3DGizmoScalings(E3DGizmoAxis::None);
-					m_bIsGizmoSelected = false;
-				}
-
+			case CObject3D::ETessellationType::Integer:
+				m_HSTriInteger->Use();
 				break;
 			default:
 				break;
 			}
 			
+			m_DSTri->Use();
 		}
 	}
 
-	if (m_PtrPickedGameObject3D)
+	if (EFLAG_HAS(PtrObject3D->eFlagsRendering, CObject3D::EFlagsRendering::NoCulling))
 	{
-		if (MouseState.leftButton && !m_bIsGizmoSelected)
-		{
-			m_PtrCapturedPickedGameObject3D = m_PtrPickedGameObject3D;
-		}
+		m_DeviceContext->RSSetState(m_CommonStates->CullNone());
+	}
+	else
+	{
+		SetUniversalRSState();
 	}
 
-	PrevMouseX = MouseState.x;
-	PrevMouseY = MouseState.y;
+	PtrObject3D->Draw(bIgnoreOwnTexture, bIgnoreInstances);
 
-	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
+	if (PtrObject3D->ShouldTessellate())
+	{
+		m_DeviceContext->HSSetShader(nullptr, nullptr, 0);
+		m_DeviceContext->DSSetShader(nullptr, nullptr, 0);
+	}
 }
 
-void CGame::Draw3DGizmoRotations(E3DGizmoAxis Axis)
+void CGame::DrawObject3DBoundingSphere(const CObject3D* const PtrObject3D)
 {
-	bool bHighlightX{ false };
-	bool bHighlightY{ false };
-	bool bHighlightZ{ false };
+	m_VSBase->Use();
 
-	switch (Axis)
+	XMMATRIX Translation{ XMMatrixTranslationFromVector(PtrObject3D->ComponentTransform.Translation + 
+		PtrObject3D->ComponentPhysics.BoundingSphere.CenterOffset) };
+	XMMATRIX Scaling{ XMMatrixScaling(PtrObject3D->ComponentPhysics.BoundingSphere.Radius,
+		PtrObject3D->ComponentPhysics.BoundingSphere.Radius, PtrObject3D->ComponentPhysics.BoundingSphere.Radius) };
+	UpdateCBSpace(Scaling * Translation);
+
+	m_DeviceContext->RSSetState(m_CommonStates->Wireframe());
+
+	m_Object3DBoundingSphere->Draw();
+
+	SetUniversalRSState();
+}
+
+void CGame::DrawObject3DLines()
+{
+	m_VSLine->Use();
+	m_PSLine->Use();
+
+	for (auto& Object3DLine : m_vObject3DLines)
 	{
-	case E3DGizmoAxis::AxisX:
-		bHighlightX = true;
+		if (Object3DLine)
+		{
+			if (!Object3DLine->bIsVisible) continue;
+
+			Object3DLine->UpdateWorldMatrix();
+
+			m_CBSpaceWVPData.World = XMMatrixTranspose(Object3DLine->ComponentTransform.MatrixWorld);
+			m_CBSpaceWVPData.ViewProjection = XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+			m_CBSpaceWVP->Update();
+
+			Object3DLine->Draw();
+		}
+	}
+}
+
+void CGame::DrawObject2Ds()
+{
+	m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthNone(), 0);
+	m_DeviceContext->OMSetBlendState(m_CommonStates->NonPremultiplied(), nullptr, 0xFFFFFFFF);
+	
+	m_VSBase2D->Use();
+	m_PSBase2D->Use();
+
+	for (auto& Object2D : m_vObject2Ds)
+	{
+		if (!Object2D->IsVisible()) continue;
+
+		UpdateCBSpace(Object2D->GetWorldMatrix());
+		
+		m_CBPS2DFlagsData.bUseTexture = (Object2D->HasTexture()) ? TRUE : FALSE;
+		m_CBPS2DFlags->Update();
+
+		Object2D->Draw();
+	}
+
+	m_DeviceContext->OMSetDepthStencilState(m_CommonStates->DepthDefault(), 0);
+}
+
+void CGame::DrawMiniAxes()
+{
+	m_DeviceContext->RSSetViewports(1, &m_vViewports[1]);
+
+	for (auto& Object3D : m_vObject3DMiniAxes)
+	{
+		UpdateObject3D(Object3D.get());
+		DrawObject3D(Object3D.get());
+
+		Object3D->ComponentTransform.Translation = m_PtrCurrentCamera->GetEyePosition() + m_PtrCurrentCamera->GetForward();
+
+		Object3D->UpdateWorldMatrix();
+	}
+
+	m_DeviceContext->RSSetViewports(1, &m_vViewports[0]);
+}
+
+void CGame::UpdatePickingRay()
+{
+	m_Object3DLinePickingRay->GetVertices().at(0).Position = m_PickingRayWorldSpaceOrigin;
+	m_Object3DLinePickingRay->GetVertices().at(1).Position = m_PickingRayWorldSpaceOrigin + m_PickingRayWorldSpaceDirection * KPickingRayLength;
+	m_Object3DLinePickingRay->UpdateVertexBuffer();
+}
+
+void CGame::DrawPickingRay()
+{
+	m_VSLine->Use();
+	m_CBSpaceWVPData.World = XMMatrixTranspose(KMatrixIdentity);
+	m_CBSpaceWVPData.ViewProjection = XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+	m_CBSpaceWVP->Update();
+
+	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
+	
+	m_PSLine->Use();
+
+	m_Object3DLinePickingRay->Draw();
+}
+
+void CGame::DrawPickedTriangle()
+{
+	m_VSBase->Use();
+	m_CBSpaceWVPData.World = XMMatrixTranspose(KMatrixIdentity);
+	m_CBSpaceWVPData.ViewProjection = XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
+	m_CBSpaceWVP->Update();
+
+	m_DeviceContext->GSSetShader(nullptr, nullptr, 0);
+	
+	m_PSVertexColor->Use();
+
+	m_Object3DPickedTriangle->GetModel().vMeshes[0].vVertices[0].Position = m_PickedTriangleV0;
+	m_Object3DPickedTriangle->GetModel().vMeshes[0].vVertices[1].Position = m_PickedTriangleV1;
+	m_Object3DPickedTriangle->GetModel().vMeshes[0].vVertices[2].Position = m_PickedTriangleV2;
+	m_Object3DPickedTriangle->UpdateMeshBuffer();
+
+	m_Object3DPickedTriangle->Draw();
+}
+
+void CGame::DrawSky(float DeltaTime)
+{
+	// SkySphere
+	{
+		m_Object3DSkySphere->ComponentTransform.Translation = m_PtrCurrentCamera->GetEyePosition();
+
+		UpdateObject3D(m_Object3DSkySphere.get());
+		DrawObject3D(m_Object3DSkySphere.get(), true, true);
+	}
+}
+
+void CGame::Draw3DGizmos()
+{
+	if (!IsAnyObject3DSelected()) return;
+	
+	switch (m_e3DGizmoMode)
+	{
+	case E3DGizmoMode::Translation:
+		Draw3DGizmoTranslations(m_e3DGizmoSelectedAxis);
 		break;
-	case E3DGizmoAxis::AxisY:
-		bHighlightY = true;
+	case E3DGizmoMode::Rotation:
+		Draw3DGizmoRotations(m_e3DGizmoSelectedAxis);
 		break;
-	case E3DGizmoAxis::AxisZ:
-		bHighlightZ = true;
+	case E3DGizmoMode::Scaling:
+		Draw3DGizmoScalings(m_e3DGizmoSelectedAxis);
 		break;
 	default:
 		break;
 	}
-
-	Draw3DGizmo(m_GameObject3D_3DGizmoRotationPitch.get(), bHighlightX);
-	Draw3DGizmo(m_GameObject3D_3DGizmoRotationYaw.get(), bHighlightY);
-	Draw3DGizmo(m_GameObject3D_3DGizmoRotationRoll.get(), bHighlightZ);
 }
 
 void CGame::Draw3DGizmoTranslations(E3DGizmoAxis Axis)
@@ -2016,24 +2368,56 @@ void CGame::Draw3DGizmoTranslations(E3DGizmoAxis Axis)
 	bool bHighlightY{ false };
 	bool bHighlightZ{ false };
 
-	switch (Axis)
+	if (IsGizmoHovered())
 	{
-	case E3DGizmoAxis::AxisX:
-		bHighlightX = true;
-		break;
-	case E3DGizmoAxis::AxisY:
-		bHighlightY = true;
-		break;
-	case E3DGizmoAxis::AxisZ:
-		bHighlightZ = true;
-		break;
-	default:
-		break;
+		switch (Axis)
+		{
+		case E3DGizmoAxis::AxisX:
+			bHighlightX = true;
+			break;
+		case E3DGizmoAxis::AxisY:
+			bHighlightY = true;
+			break;
+		case E3DGizmoAxis::AxisZ:
+			bHighlightZ = true;
+			break;
+		default:
+			break;
+		}
 	}
 
-	Draw3DGizmo(m_GameObject3D_3DGizmoTranslationX.get(), bHighlightX);
-	Draw3DGizmo(m_GameObject3D_3DGizmoTranslationY.get(), bHighlightY);
-	Draw3DGizmo(m_GameObject3D_3DGizmoTranslationZ.get(), bHighlightZ);
+	Draw3DGizmo(m_Object3D_3DGizmoTranslationX.get(), bHighlightX);
+	Draw3DGizmo(m_Object3D_3DGizmoTranslationY.get(), bHighlightY);
+	Draw3DGizmo(m_Object3D_3DGizmoTranslationZ.get(), bHighlightZ);
+}
+
+void CGame::Draw3DGizmoRotations(E3DGizmoAxis Axis)
+{
+	bool bHighlightX{ false };
+	bool bHighlightY{ false };
+	bool bHighlightZ{ false };
+
+	if (IsGizmoHovered())
+	{
+		switch (Axis)
+		{
+		case E3DGizmoAxis::AxisX:
+			bHighlightX = true;
+			break;
+		case E3DGizmoAxis::AxisY:
+			bHighlightY = true;
+			break;
+		case E3DGizmoAxis::AxisZ:
+			bHighlightZ = true;
+			break;
+		default:
+			break;
+		}
+	}
+
+	Draw3DGizmo(m_Object3D_3DGizmoRotationPitch.get(), bHighlightX);
+	Draw3DGizmo(m_Object3D_3DGizmoRotationYaw.get(), bHighlightY);
+	Draw3DGizmo(m_Object3D_3DGizmoRotationRoll.get(), bHighlightZ);
 }
 
 void CGame::Draw3DGizmoScalings(E3DGizmoAxis Axis)
@@ -2042,95 +2426,1322 @@ void CGame::Draw3DGizmoScalings(E3DGizmoAxis Axis)
 	bool bHighlightY{ false };
 	bool bHighlightZ{ false };
 
-	switch (Axis)
+	if (IsGizmoHovered())
 	{
-	case E3DGizmoAxis::AxisX:
-		bHighlightX = true;
-		break;
-	case E3DGizmoAxis::AxisY:
-		bHighlightY = true;
-		break;
-	case E3DGizmoAxis::AxisZ:
-		bHighlightZ = true;
-		break;
-	default:
-		break;
+		switch (Axis)
+		{
+		case E3DGizmoAxis::AxisX:
+			bHighlightX = true;
+			break;
+		case E3DGizmoAxis::AxisY:
+			bHighlightY = true;
+			break;
+		case E3DGizmoAxis::AxisZ:
+			bHighlightZ = true;
+			break;
+		default:
+			break;
+		}
 	}
 
-	Draw3DGizmo(m_GameObject3D_3DGizmoScalingX.get(), bHighlightX);
-	Draw3DGizmo(m_GameObject3D_3DGizmoScalingY.get(), bHighlightY);
-	Draw3DGizmo(m_GameObject3D_3DGizmoScalingZ.get(), bHighlightZ);
+	Draw3DGizmo(m_Object3D_3DGizmoScalingX.get(), bHighlightX);
+	Draw3DGizmo(m_Object3D_3DGizmoScalingY.get(), bHighlightY);
+	Draw3DGizmo(m_Object3D_3DGizmoScalingZ.get(), bHighlightZ);
 }
 
-void CGame::Draw3DGizmo(CGameObject3D* Gizmo, bool bShouldHighlight)
+void CGame::Draw3DGizmo(CObject3D* const Gizmo, bool bShouldHighlight)
 {
 	CShader* VS{ Gizmo->ComponentRender.PtrVS };
 	CShader* PS{ Gizmo->ComponentRender.PtrPS };
 
-	float Scalar{ XMVectorGetX(XMVector3Length(m_vCameras[m_CurrentCameraIndex].m_CameraData.EyePosition - Gizmo->ComponentTransform.Translation)) * 0.1f };
+	float Scalar{ XMVectorGetX(XMVector3Length(m_PtrCurrentCamera->GetEyePosition() - Gizmo->ComponentTransform.Translation)) * 0.1f };
 	Scalar = pow(Scalar, 0.7f);
 
 	Gizmo->ComponentTransform.Scaling = XMVectorSet(Scalar, Scalar, Scalar, 0.0f);
 	Gizmo->UpdateWorldMatrix();
-	m_cbVSSpaceData.World = XMMatrixTranspose(Gizmo->ComponentTransform.MatrixWorld);
-	m_cbVSSpaceData.WVP = XMMatrixTranspose(Gizmo->ComponentTransform.MatrixWorld * m_MatrixView * m_MatrixProjection);
-	VS->UpdateConstantBuffer(0);
+	UpdateCBSpace(Gizmo->ComponentTransform.MatrixWorld);
 	VS->Use();
 
-	if (bShouldHighlight)
-	{
-		m_cbPSGizmoColorFactorData.ColorFactor = XMVectorSet(1.0f, 1.0f, 1.0f, 0.95f);
-	}
-	else
-	{
-		m_cbPSGizmoColorFactorData.ColorFactor = XMVectorSet(0.75f, 0.75f, 0.75f, 0.75f);
-	}
-	PS->UpdateConstantBuffer(0);
+	m_CBGizmoColorFactorData.ColorFactor = (bShouldHighlight) ? XMVectorSet(2.0f, 2.0f, 2.0f, 0.95f) : XMVectorSet(0.75f, 0.75f, 0.75f, 0.75f);
+	m_CBGizmoColorFactor->Update();
 	PS->Use();
 
-	Gizmo->ComponentRender.PtrObject3D->Draw();
+	Gizmo->Draw();
 }
 
-void CGame::SetUniversalRasterizerState()
+void CGame::DrawEditorGUI()
 {
-	switch (m_eRasterizerState)
+	ImGui_ImplDX11_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::PushFont(m_EditorGUIFont);
+
+	DrawEditorGUIMenuBar();
+
+	DrawEditorGUIPopupObjectAdder();
+
+	DrawEditorGUIWindowPropertyEditor();
+
+	DrawEditorGUIWindowSceneEditor();
+
+	ImGui::PopFont();
+
+	ImGui::Render();
+	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+void CGame::DrawEditorGUIMenuBar()
+{
+	if (ImGui::BeginMainMenuBar())
 	{
-	case ERasterizerState::CullNone:
-		m_DeviceContext->RSSetState(m_CommonStates->CullNone());
-		break;
-	case ERasterizerState::CullClockwise:
-		m_DeviceContext->RSSetState(m_CommonStates->CullClockwise());
-		break;
-	case ERasterizerState::CullCounterClockwise:
-		m_DeviceContext->RSSetState(m_CommonStates->CullCounterClockwise());
-		break;
-	case ERasterizerState::WireFrame:
-		m_DeviceContext->RSSetState(m_CommonStates->Wireframe());
-		break;
-	default:
-		break;
+		if (m_CapturedKeyboardState.LeftControl && m_CapturedKeyboardState.A) m_EditorGUIBools.bShowPopupObjectAdder = true;
+
+		if (ImGui::BeginMenu(u8"창"))
+		{
+			ImGui::MenuItem(u8"속성 편집기", nullptr, &m_EditorGUIBools.bShowWindowPropertyEditor);
+			ImGui::MenuItem(u8"장면 편집기", nullptr, &m_EditorGUIBools.bShowWindowSceneEditor);
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::MenuItem(u8"종료", "Alt+Q"))
+		{
+			Destroy();
+			return;
+		}
+
+		ImGui::EndMainMenuBar();
 	}
 }
 
-void CGame::SetUniversalbUseLighiting()
+void CGame::DrawEditorGUIPopupObjectAdder()
 {
-	if (EFLAG_HAS(m_eFlagsGameRendering, EFlagsGameRendering::UseLighting))
+	// ### 오브젝트 추가 윈도우 ###
+	if (m_EditorGUIBools.bShowPopupObjectAdder) ImGui::OpenPopup(u8"오브젝트 추가기");
+	ImGui::SetNextWindowPosCenter();
+	if (ImGui::BeginPopup(u8"오브젝트 추가기", ImGuiWindowFlags_AlwaysAutoResize))
 	{
-		m_cbPSBaseFlagsData.bUseLighting = TRUE;
+		static char NewObejctName[KAssetNameMaxLength]{};
+		static char ModelFileNameWithPath[MAX_PATH]{};
+		static char ModelFileNameWithoutPath[MAX_PATH]{};
+		static bool bIsModelRigged{ false };
+
+		static constexpr float KIndentPerDepth{ 12.0f };
+		static constexpr float KItemsOffetX{ 150.0f };
+		static constexpr float KItemsWidth{ 150.0f };
+		static const char* const KOptions[2]{ u8"3D 도형 (삼각형)", u8"2-패치 구 (제어점 1개)" };
+		static int iSelectedOption{};
+
+		static const char* const K3DPrimitiveTypes[9]{ u8"정사각형(XY)", u8"정사각형(XZ)", u8"정사각형(YZ)",
+				u8"원", u8"정육면체", u8"각뿔", u8"각기둥", u8"구", u8"도넛(Torus)" };
+		static int iSelected3DPrimitiveType{};
+		static uint32_t SideCount{ KDefaultPrimitiveDetail };
+		static uint32_t SegmentCount{ KDefaultPrimitiveDetail };
+		static float RadiusFactor{ 0.0f };
+		static float InnerRadius{ 0.5f };
+		static float WidthScalar3D{ 1.0f };
+		static float HeightScalar3D{ 1.0f };
+		static float PixelWidth{ 50.0f };
+		static float PixelHeight{ 50.0f };
+
+		static XMFLOAT4 MaterialUniformColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+
+		bool bShowDialogLoad3DModel{};
+
+		ImGui::SetItemDefaultFocus();
+		ImGui::SetNextItemWidth(140);
+		ImGui::InputText(u8"오브젝트 이름", NewObejctName, KAssetNameMaxLength);
+
+		for (int iOption = 0; iOption < ARRAYSIZE(KOptions); ++iOption)
+		{
+			if (ImGui::Selectable(KOptions[iOption], (iSelectedOption == iOption)))
+			{
+				iSelectedOption = iOption;
+			}
+
+			if (iSelectedOption == iOption)
+			{
+				if (iSelectedOption == 0)
+				{
+					ImGui::Indent(KIndentPerDepth);
+
+					for (int i3DPrimitiveType = 0; i3DPrimitiveType < ARRAYSIZE(K3DPrimitiveTypes); ++i3DPrimitiveType)
+					{
+						if (ImGui::Selectable(K3DPrimitiveTypes[i3DPrimitiveType], (iSelected3DPrimitiveType == i3DPrimitiveType)))
+						{
+							iSelected3DPrimitiveType = i3DPrimitiveType;
+						}
+						if (i3DPrimitiveType == iSelected3DPrimitiveType)
+						{
+							ImGui::Indent(KIndentPerDepth);
+
+							ImGui::PushItemWidth(KItemsWidth);
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"- 색상");
+							ImGui::SameLine(KItemsOffetX);
+							ImGui::ColorEdit3(u8"##- 색상", (float*)&MaterialUniformColor.x, ImGuiColorEditFlags_RGB);
+
+							// Quasi-2D primitives scalars
+							if (iSelected3DPrimitiveType >= 0 && iSelected3DPrimitiveType <= 3)
+							{
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"- 가로 크기");
+								ImGui::SameLine(KItemsOffetX);
+								ImGui::SliderFloat(u8"##- 가로 크기", &WidthScalar3D, 0.01f, 100.0f);
+
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"- 세로 크기");
+								ImGui::SameLine(KItemsOffetX);
+								ImGui::SliderFloat(u8"##- 세로 크기", &HeightScalar3D, 0.01f, 100.0f);
+							}
+
+							// 3D primitives that require SideCount
+							if (iSelected3DPrimitiveType == 3 || (iSelected3DPrimitiveType >= 5 && iSelected3DPrimitiveType <= 6) || iSelected3DPrimitiveType == 8)
+							{
+								if (iSelected3DPrimitiveType == 5)
+								{
+									// Cone
+									ImGui::AlignTextToFramePadding();
+									ImGui::Text(u8"- 반지름 인수");
+									ImGui::SameLine(KItemsOffetX);
+									ImGui::SliderFloat(u8"##- 반지름 인수", &RadiusFactor, 0.0f, 1.0f);
+								}
+
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"- 옆면 수");
+								ImGui::SameLine(KItemsOffetX);
+								ImGui::SliderInt(u8"##- 옆면 수", (int*)&SideCount, KMinPrimitiveDetail, KMaxPrimitiveDetail);
+							}
+
+							// 3D primitives that require SegmentCount
+							if (iSelected3DPrimitiveType == 7 || iSelected3DPrimitiveType == 8)
+							{
+								if (iSelected3DPrimitiveType == 8)
+								{
+									// Torus
+									ImGui::AlignTextToFramePadding();
+									ImGui::Text(u8"- 띠 반지름");
+									ImGui::SameLine(KItemsOffetX);
+									ImGui::SliderFloat(u8"##- 띠 반지름", &InnerRadius, 0.0f, 1.0f);
+								}
+
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"- Segment 수");
+								ImGui::SameLine(KItemsOffetX);
+								ImGui::SliderInt(u8"##- Segment 수", (int*)&SegmentCount, KMinPrimitiveDetail, KMaxPrimitiveDetail);
+							}
+
+							ImGui::PopItemWidth();
+
+							ImGui::Unindent(KIndentPerDepth);
+						}
+					}
+
+					ImGui::Unindent(KIndentPerDepth);
+				}
+				else if (iSelectedOption == 1)
+				{
+					// 1 control point 2 patches
+				}
+			}
+		}
+		
+		if (ImGui::Button(u8"결정") || m_CapturedKeyboardState.Enter)
+		{
+			if (strlen(NewObejctName) == 0)
+			{
+				strcpy_s(NewObejctName, ("primitive" + to_string(m_PrimitiveCreationCounter)).c_str());
+			}
+
+			bool IsObjectCreated{ true };
+			if (iSelectedOption == 0)
+			{
+				InsertObject3D(NewObejctName);
+				CObject3D* const Object3D{ GetObject3D(NewObejctName) };
+
+				SMesh Mesh{};
+				CMaterialData MaterialData{};
+				MaterialData.SetUniformColor(XMFLOAT3(MaterialUniformColor.x, MaterialUniformColor.y, MaterialUniformColor.z));
+
+				switch (iSelected3DPrimitiveType)
+				{
+				case 0:
+					Mesh = GenerateSquareXYPlane();
+					ScaleMesh(Mesh, XMVectorSet(WidthScalar3D, HeightScalar3D, 1.0f, 0));
+					Object3D->ComponentPhysics.BoundingSphere.Radius = sqrt(2.0f);
+					break;
+				case 1:
+					Mesh = GenerateSquareXZPlane();
+					ScaleMesh(Mesh, XMVectorSet(WidthScalar3D, 1.0f, HeightScalar3D, 0));
+					Object3D->ComponentPhysics.BoundingSphere.Radius = sqrt(2.0f);
+					break;
+				case 2:
+					Mesh = GenerateSquareYZPlane();
+					ScaleMesh(Mesh, XMVectorSet(1.0f, WidthScalar3D, HeightScalar3D, 0));
+					Object3D->ComponentPhysics.BoundingSphere.Radius = sqrt(2.0f);
+					break;
+				case 3:
+					Mesh = GenerateCircleXZPlane(SideCount);
+					ScaleMesh(Mesh, XMVectorSet(WidthScalar3D, 1.0f, HeightScalar3D, 0));
+					break;
+				case 4:
+					Mesh = GenerateCube();
+					break;
+				case 5:
+					Mesh = GenerateCone(RadiusFactor, 1.0f, 1.0f, SideCount);
+					Object3D->ComponentPhysics.BoundingSphere.CenterOffset = XMVectorSetY(Object3D->ComponentPhysics.BoundingSphere.CenterOffset, -0.5f);
+					break;
+				case 6:
+					Mesh = GenerateCylinder(1.0f, 1.0f, SideCount);
+					Object3D->ComponentPhysics.BoundingSphere.Radius = sqrt(1.5f);
+					break;
+				case 7:
+					Mesh = GenerateSphere(SegmentCount);
+					break;
+				case 8:
+					Mesh = GenerateTorus(InnerRadius, SideCount, SegmentCount);
+					Object3D->ComponentPhysics.BoundingSphere.Radius += InnerRadius;
+					break;
+				default:
+					break;
+				}
+
+				Object3D->Create(Mesh, MaterialData);
+
+				++m_PrimitiveCreationCounter;
+			}
+			else if (iSelectedOption == 1)
+			{
+				// 1 control point 2 patches (must tessellate)
+
+				InsertObject3D(NewObejctName);
+				CObject3D* const Object3D{ GetObject3D(NewObejctName) };
+
+				Object3D->CreatePatches(1, 2);
+
+				++m_PrimitiveCreationCounter;
+			}
+
+			if (IsObjectCreated)
+			{
+				m_EditorGUIBools.bShowPopupObjectAdder = false;
+				memset(NewObejctName, 0, KAssetNameMaxLength);
+
+				WidthScalar3D = 1.0f;
+				HeightScalar3D = 1.0f;
+
+				ImGui::CloseCurrentPopup();
+			}
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button(u8"취소"))
+		{
+			m_EditorGUIBools.bShowPopupObjectAdder = false;
+			memset(ModelFileNameWithPath, 0, MAX_PATH);
+			memset(ModelFileNameWithoutPath, 0, MAX_PATH);
+			memset(NewObejctName, 0, KAssetNameMaxLength);
+			ImGui::CloseCurrentPopup();
+		}
+
+		if (bShowDialogLoad3DModel)
+		{
+			static CFileDialog FileDialog{ GetWorkingDirectory() };
+			if (FileDialog.OpenFileDialog("FBX 파일\0*.fbx\0SMOD 파일\0*.smod\0모든 파일\0*.*\0", "모델 불러오기"))
+			{
+				strcpy_s(ModelFileNameWithPath, FileDialog.GetRelativeFileName().c_str());
+				strcpy_s(ModelFileNameWithoutPath, FileDialog.GetFileNameWithoutPath().c_str());
+			}
+		}
+
+		ImGui::EndPopup();
+	}
+}
+
+void CGame::DrawEditorGUIWindowPropertyEditor()
+{
+	// ### 속성 편집기 윈도우 ###
+	if (m_EditorGUIBools.bShowWindowPropertyEditor)
+	{
+		static constexpr float KInitialWindowWidth{ 400 };
+		ImGui::SetNextWindowPos(ImVec2(m_WindowSize.x - KInitialWindowWidth, 21), ImGuiCond_Appearing);
+		ImGui::SetNextWindowSize(ImVec2(KInitialWindowWidth, 0), ImGuiCond_Appearing);
+		ImGui::SetNextWindowSizeConstraints(
+			ImVec2(m_WindowSize.x * 0.25f, m_WindowSize.y), ImVec2(m_WindowSize.x * 0.5f, m_WindowSize.y));
+
+		if (ImGui::Begin(u8"속성 편집기", &m_EditorGUIBools.bShowWindowPropertyEditor, 
+			ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysVerticalScrollbar))
+		{
+			float WindowWidth{ ImGui::GetWindowWidth() };
+
+			if (ImGui::BeginTabBar(u8"탭바", ImGuiTabBarFlags_None))
+			{
+				// 오브젝트 탭
+				if (ImGui::BeginTabItem(u8"오브젝트"))
+				{
+					static constexpr float KLabelsWidth{ 220 };
+					static constexpr float KItemsMaxWidth{ 240 };
+					float ItemsWidth{ WindowWidth - KLabelsWidth };
+					ItemsWidth = min(ItemsWidth, KItemsMaxWidth);
+					float ItemsOffsetX{ WindowWidth - ItemsWidth - 20 };
+
+					if (IsAnyObject3DSelected())
+					{
+						ImGui::PushItemWidth(ItemsWidth);
+						{
+							CObject3D* const Object3D{ GetSelectedObject3D() };
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"선택된 오브젝트:");
+							ImGui::SameLine(ItemsOffsetX);
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"<%s>", GetSelectedObject3DName().c_str());
+
+							ImGui::Separator();
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"위치");
+							ImGui::SameLine(ItemsOffsetX);
+							float Translation[3]{ XMVectorGetX(Object3D->ComponentTransform.Translation),
+							XMVectorGetY(Object3D->ComponentTransform.Translation), XMVectorGetZ(Object3D->ComponentTransform.Translation) };
+							if (ImGui::DragFloat3(u8"##위치", Translation, KTranslationDelta,
+								KTranslationMinLimit, KTranslationMaxLimit, "%.2f"))
+							{
+								Object3D->ComponentTransform.Translation = XMVectorSet(Translation[0], Translation[1], Translation[2], 1.0f);
+								Object3D->UpdateWorldMatrix();
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"회전");
+							ImGui::SameLine(ItemsOffsetX);
+							int PitchYawRoll360[3]{ (int)(Object3D->ComponentTransform.Pitch * KRotation2PITo360),
+								(int)(Object3D->ComponentTransform.Yaw * KRotation2PITo360),
+								(int)(Object3D->ComponentTransform.Roll * KRotation2PITo360) };
+							if (ImGui::DragInt3(u8"##회전", PitchYawRoll360, KRotation360Unit,
+								KRotation360MinLimit, KRotation360MaxLimit))
+							{
+								Object3D->ComponentTransform.Pitch = PitchYawRoll360[0] * KRotation360To2PI;
+								Object3D->ComponentTransform.Yaw = PitchYawRoll360[1] * KRotation360To2PI;
+								Object3D->ComponentTransform.Roll = PitchYawRoll360[2] * KRotation360To2PI;
+								Object3D->UpdateWorldMatrix();
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"크기");
+							ImGui::SameLine(ItemsOffsetX);
+							float Scaling[3]{ XMVectorGetX(Object3D->ComponentTransform.Scaling),
+								XMVectorGetY(Object3D->ComponentTransform.Scaling), XMVectorGetZ(Object3D->ComponentTransform.Scaling) };
+							if (ImGui::DragFloat3(u8"##크기", Scaling, KScalingDelta,
+								KScalingMinLimit, KScalingMaxLimit, "%.3f"))
+							{
+								Object3D->ComponentTransform.Scaling = XMVectorSet(Scaling[0], Scaling[1], Scaling[2], 0.0f);
+								Object3D->UpdateWorldMatrix();
+							}
+
+							ImGui::Separator();
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"오브젝트 BS 중심");
+							ImGui::SameLine(ItemsOffsetX);
+							float BSCenterOffset[3]{
+								XMVectorGetX(Object3D->ComponentPhysics.BoundingSphere.CenterOffset),
+								XMVectorGetY(Object3D->ComponentPhysics.BoundingSphere.CenterOffset),
+								XMVectorGetZ(Object3D->ComponentPhysics.BoundingSphere.CenterOffset) };
+							if (ImGui::DragFloat3(u8"##오브젝트 BS 중심", BSCenterOffset, KBSCenterOffsetDelta,
+								KBSCenterOffsetMinLimit, KBSCenterOffsetMaxLimit, "%.2f"))
+							{
+								Object3D->ComponentPhysics.BoundingSphere.CenterOffset =
+									XMVectorSet(BSCenterOffset[0], BSCenterOffset[1], BSCenterOffset[2], 1.0f);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"오브젝트 BS 반지름 편중치");
+							ImGui::SameLine(ItemsOffsetX);
+							float BSRadiusBias{ Object3D->ComponentPhysics.BoundingSphere.RadiusBias };
+							if (ImGui::DragFloat(u8"##오브젝트 BS반지름 편중치", &BSRadiusBias, KBSRadiusBiasDelta,
+								KBSRadiusBiasMinLimit, KBSRadiusBiasMaxLimit, "%.2f"))
+							{
+								Object3D->ComponentPhysics.BoundingSphere.RadiusBias = BSRadiusBias;
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"오브젝트 BS 반지름 (자동)");
+							ImGui::SameLine(ItemsOffsetX);
+							float BSRadius{ Object3D->ComponentPhysics.BoundingSphere.Radius };
+							ImGui::DragFloat(u8"##오브젝트 BS반지름 (자동)", &BSRadius, KBSRadiusDelta,
+								KBSRadiusMinLimit, KBSRadiusMaxLimit, "%.2f");
+
+							ImGui::Separator();
+
+							if (Object3D->IsPatches())
+							{
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"제어점 개수");
+								ImGui::SameLine(ItemsOffsetX);
+								ImGui::Text(u8"%d", (int)Object3D->GetControlPointCountPerPatch());
+
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"패치 개수");
+								ImGui::SameLine(ItemsOffsetX);
+								ImGui::Text(u8"%d", (int)Object3D->GetPatchCount());
+							}
+							else
+							{
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"정점 개수");
+								ImGui::SameLine(ItemsOffsetX);
+								int VertexCount{};
+								for (const SMesh& Mesh : Object3D->GetModel().vMeshes)
+								{
+									VertexCount += (int)Mesh.vVertices.size();
+								}
+								ImGui::Text(u8"%d", VertexCount);
+
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"삼각형 개수");
+								ImGui::SameLine(ItemsOffsetX);
+								int TriangleCount{};
+								for (const SMesh& Mesh : Object3D->GetModel().vMeshes)
+								{
+									TriangleCount += (int)Mesh.vTriangles.size();
+								}
+								ImGui::Text(u8"%d", TriangleCount);
+							}
+
+							// Tessellation data
+							ImGui::Separator();
+
+							if (!Object3D->IsPatches())
+							{
+								bool bShouldTessellate{ Object3D->ShouldTessellate() };
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"테셀레이션 사용 여부");
+								ImGui::SameLine(ItemsOffsetX);
+								if (ImGui::Checkbox(u8"##테셀레이션 사용 여부", &bShouldTessellate))
+								{
+									Object3D->ShouldTessellate(bShouldTessellate);
+								}
+							}
+							
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"테셀레이션 방식");
+
+							int iTessellationType{ (int)Object3D->TessellationType() };
+							ImGui::RadioButton(u8"Frational Odd", &iTessellationType, 0);
+							ImGui::RadioButton(u8"Frational Even", &iTessellationType, 1);
+							ImGui::RadioButton(u8"Integer", &iTessellationType, 2);
+							Object3D->TessellationType((CObject3D::ETessellationType)iTessellationType);
+
+							CObject3D::SCBTessFactorData TessFactorData{ Object3D->GetTessFactorData() };
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"테셀레이션 변 계수");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::SliderFloat(u8"##테셀레이션 변 계수", &TessFactorData.EdgeTessFactor, 0.0f, 64.0f, "%.2f"))
+							{
+								Object3D->SetTessFactorData(TessFactorData);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"테셀레이션 내부 계수");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::SliderFloat(u8"##테셀레이션 내부 계수", &TessFactorData.InsideTessFactor, 0.0f, 64.0f, "%.2f"))
+							{
+								Object3D->SetTessFactorData(TessFactorData);
+							}
+
+							CObject3D::SCBDisplacementData DisplacementData{ Object3D->GetDisplacementData() };
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"변위 계수");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::SliderFloat(u8"##변위 계수", &DisplacementData.DisplacementFactor, 0.0f, 1.0f, "%.2f"))
+							{
+								Object3D->SetDisplacementData(DisplacementData);
+							}
+
+							// Material data
+							ImGui::Separator();
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"오브젝트 재질");
+							if (Object3D->GetMaterialCount() > 0)
+							{
+								static CMaterialData* capturedMaterialData{};
+								static CMaterialTextureSet* capturedMaterialTextureSet{};
+								static STextureData::EType ecapturedTextureType{};
+								if (!ImGui::IsPopupOpen(u8"텍스처탐색기")) m_EditorGUIBools.bShowPopupMaterialTextureExplorer = false;
+
+								for (size_t iMaterial = 0; iMaterial < Object3D->GetMaterialCount(); ++iMaterial)
+								{
+									CMaterialData& MaterialData{ Object3D->GetModel().vMaterialData[iMaterial] };
+									CMaterialTextureSet* const MaterialTextureSet{ Object3D->GetMaterialTextureSet(iMaterial) };
+
+									ImGui::PushID((int)iMaterial);
+
+									if (DrawEditorGUIWindowPropertyEditor_MaterialData(MaterialData, MaterialTextureSet, ecapturedTextureType, ItemsOffsetX))
+									{
+										capturedMaterialData = &MaterialData;
+										capturedMaterialTextureSet = MaterialTextureSet;
+									}
+	
+									ImGui::PopID();
+								}
+
+								DrawEditorGUIPopupMaterialTextureExplorer(capturedMaterialData, capturedMaterialTextureSet, ecapturedTextureType);
+								DrawEditorGUIPopupMaterialNameChanger(capturedMaterialData, true);
+							}
+						}
+						ImGui::PopItemWidth();
+					}
+					else if (IsAnyObject2DSelected())
+					{
+						// Object2D
+					}
+					else if (IsAnyCameraSelected())
+					{
+						ImGui::PushItemWidth(ItemsWidth);
+						{
+							CCamera* const SelectedCamera{ GetSelectedCamera() };
+							const XMVECTOR& KEyePosition{ SelectedCamera->GetEyePosition() };
+							float EyePosition[3]{ XMVectorGetX(KEyePosition), XMVectorGetY(KEyePosition), XMVectorGetZ(KEyePosition) };
+							float Pitch{ SelectedCamera->GetPitch() };
+							float Yaw{ SelectedCamera->GetYaw() };
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"현재 화면 카메라:");
+							ImGui::SameLine(ItemsOffsetX);
+							ImGui::AlignTextToFramePadding();
+							CCamera* const CurrentCamera{ GetCurrentCamera() };
+							ImGui::Text(u8"<%s>", CurrentCamera->GetName().c_str());
+
+							if (m_PtrCurrentCamera != GetEditorCamera())
+							{
+								ImGui::SetCursorPosX(ItemsOffsetX);
+								if (ImGui::Button(u8"에디터 카메라로 돌아가기", ImVec2(ItemsWidth, 0)))
+								{
+									m_PtrCurrentCamera = GetEditorCamera();
+								}
+							}
+
+							ImGui::Separator();
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"선택된 카메라:");
+							ImGui::SameLine(ItemsOffsetX);
+							ImGui::AlignTextToFramePadding();
+							string Name{ GetSelectedCameraName() };
+							ImGui::Text(u8"<%s>", GetSelectedCameraName().c_str());
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"카메라 종류:");
+							ImGui::SameLine(ItemsOffsetX);
+							switch (SelectedCamera->GetType())
+							{
+							case CCamera::EType::FirstPerson:
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"1인칭 카메라");
+								break;
+							case CCamera::EType::ThirdPerson:
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"3인칭 카메라");
+								break;
+							case CCamera::EType::FreeLook:
+								ImGui::AlignTextToFramePadding();
+								ImGui::Text(u8"자유 시점 카메라");
+								break;
+							default:
+								break;
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"위치");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::DragFloat3(u8"##위치", EyePosition, 0.01f, -10000.0f, +10000.0f, "%.3f"))
+							{
+								SelectedCamera->SetEyePosition(XMVectorSet(EyePosition[0], EyePosition[1], EyePosition[2], 1.0f));
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"회전 Pitch");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::DragFloat(u8"##회전 Pitch", &Pitch, 0.01f, -10000.0f, +10000.0f, "%.3f"))
+							{
+								SelectedCamera->SetPitch(Pitch);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"회전 Yaw");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::DragFloat(u8"##회전 Yaw", &Yaw, 0.01f, -10000.0f, +10000.0f, "%.3f"))
+							{
+								SelectedCamera->SetYaw(Yaw);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"카메라 이동 속도");
+							ImGui::SameLine(ItemsOffsetX);
+							ImGui::SliderFloat(u8"##카메라 이동 속도", &m_CameraMovementFactor, 1.0f, 100.0f, "%.0f");
+
+							if (m_PtrCurrentCamera != SelectedCamera)
+							{
+								ImGui::SetCursorPosX(ItemsOffsetX);
+								if (ImGui::Button(u8"현재 화면 카메라로 지정", ImVec2(ItemsWidth, 0)))
+								{
+									m_PtrCurrentCamera = SelectedCamera;
+								}
+							}
+						}
+						ImGui::PopItemWidth();
+					}
+					else
+					{
+						ImGui::Text(u8"<먼저 오브젝트를 선택하세요.>");
+					}
+
+					ImGui::EndTabItem();
+				}
+
+				// 기타 탭
+				if (ImGui::BeginTabItem(u8"기타"))
+				{
+					const XMVECTOR& KDirectionalLightDirection{ GetDirectionalLightDirection() };
+					float DirectionalLightDirection[3]{ XMVectorGetX(KDirectionalLightDirection), XMVectorGetY(KDirectionalLightDirection),
+						XMVectorGetZ(KDirectionalLightDirection) };
+
+					static constexpr float KLabelsWidth{ 220 };
+					static constexpr float KItemsMaxWidth{ 240 };
+					float ItemsWidth{ WindowWidth - KLabelsWidth };
+					ItemsWidth = min(ItemsWidth, KItemsMaxWidth);
+					float ItemsOffsetX{ WindowWidth - ItemsWidth - 20 };
+					ImGui::PushItemWidth(ItemsWidth);
+					{
+						if (ImGui::TreeNodeEx(u8"조명", ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen))
+						{
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"Directional Light 위치");
+							ImGui::SameLine(ItemsOffsetX);
+							if (ImGui::DragFloat3(u8"##Directional Light 위치", DirectionalLightDirection, 0.02f, -1.0f, +1.0f, "%.2f"))
+							{
+								SetDirectionalLightDirection(XMVectorSet(DirectionalLightDirection[0], DirectionalLightDirection[1],
+									DirectionalLightDirection[2], 0.0f));
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"Directional Light 색상");
+							ImGui::SameLine(ItemsOffsetX);
+							XMFLOAT3 DirectionalLightColor{ GetDirectionalLightColor() };
+							if (ImGui::ColorEdit3(u8"##Directional Light 색상 (HDR)", &DirectionalLightColor.x,
+								ImGuiColorEditFlags_RGB | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+							{
+								SetDirectionalLightColor(DirectionalLightColor);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"Ambient Light 색상");
+							ImGui::SameLine(ItemsOffsetX);
+							XMFLOAT3 AmbientLightColor{ GetAmbientLightColor() };
+							if (ImGui::ColorEdit3(u8"##Ambient Light 색상", &AmbientLightColor.x, ImGuiColorEditFlags_RGB))
+							{
+								SetAmbientlLight(AmbientLightColor, GetAmbientLightIntensity());
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"Ambient Light 강도");
+							ImGui::SameLine(ItemsOffsetX);
+							float AmbientLightIntensity{ GetAmbientLightIntensity() };
+							if (ImGui::DragFloat(u8"##Ambient Light 강도", &AmbientLightIntensity, 0.02f, 0.0f, +1.0f, "%.2f"))
+							{
+								SetAmbientlLight(GetAmbientLightColor(), AmbientLightIntensity);
+							}
+
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"노출 (HDR)");
+							ImGui::SameLine(ItemsOffsetX);
+							float Exposure{ GetExposure() };
+							if (ImGui::DragFloat(u8"##노출", &Exposure, 0.02f, 0.1f, +10.0f, "%.2f"))
+							{
+								SetExposure(Exposure);
+							}
+
+							ImGui::TreePop();
+						}
+
+						ImGui::Separator();
+
+						if (ImGui::TreeNodeEx(u8"FPS", ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen))
+						{
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"Frames per second:");
+							ImGui::SameLine(ItemsOffsetX);
+							ImGui::AlignTextToFramePadding();
+							ImGui::Text(u8"%d", m_FPS);
+
+							ImGui::TreePop();
+						}
+
+						ImGui::Separator();
+						ImGui::Separator();
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"에디터 플래그");
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"와이어 프레임");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawWireFrame{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawWireFrame) };
+						if (ImGui::Checkbox(u8"##와이어 프레임", &bDrawWireFrame))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::DrawWireFrame);
+						}
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"법선 표시");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawNormals{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawNormals) };
+						if (ImGui::Checkbox(u8"##법선 표시", &bDrawNormals))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::DrawNormals);
+						}
+
+						/*
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"3D Gizmo 표시");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawBoundingSphere{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::Use3DGizmos) };
+						if (ImGui::Checkbox(u8"##3D Gizmo 표시", &bDrawBoundingSphere))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::Use3DGizmos);
+						}
+						*/
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"화면 상단에 좌표축 표시");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawMiniAxes{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawMiniAxes) };
+						if (ImGui::Checkbox(u8"##화면 상단에 좌표축 표시", &bDrawMiniAxes))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::DrawMiniAxes);
+						}
+
+						/*
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"피킹 데이터 표시");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawPickingData{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawPickingData) };
+						if (ImGui::Checkbox(u8"##피킹 데이터 표시", &bDrawPickingData))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::DrawPickingData);
+						}
+						*/
+						
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"Bounding Sphere 표시");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bDrawBoundingSphere{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::DrawBoundingSphere) };
+						if (ImGui::Checkbox(u8"##Bounding Sphere 표시", &bDrawBoundingSphere))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::DrawBoundingSphere);
+						}
+
+						ImGui::Separator();
+						ImGui::Separator();
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"엔진 플래그");
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"조명 적용");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bUseLighting{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::UseLighting) };
+						if (ImGui::Checkbox(u8"##조명 적용", &bUseLighting))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::UseLighting);
+						}
+
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text(u8"물리 기반 렌더링 사용");
+						ImGui::SameLine(ItemsOffsetX);
+						bool bUsePhysicallyBasedRendering{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::UsePhysicallyBasedRendering) };
+						if (ImGui::Checkbox(u8"##물리 기반 렌더링 사용", &bUsePhysicallyBasedRendering))
+						{
+							ToggleGameRenderingFlags(EFlagsRendering::UsePhysicallyBasedRendering);
+						}
+					}
+					ImGui::PopItemWidth();
+
+					ImGui::EndTabItem();
+				}
+
+				ImGui::EndTabBar();
+			}
+		}
+
+		ImGui::End();
+	}
+}
+
+bool CGame::DrawEditorGUIWindowPropertyEditor_MaterialData(CMaterialData& MaterialData, CMaterialTextureSet* const TextureSet, 
+	STextureData::EType& eSeletedTextureType, float ItemsOffsetX)
+{
+	bool Result{ false };
+	bool bUsePhysicallyBasedRendering{ EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::UsePhysicallyBasedRendering) };
+
+	if (ImGui::TreeNodeEx(MaterialData.Name().c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+	{
+		if (ImGui::Button(u8"재질 이름 변경"))
+		{
+			m_EditorGUIBools.bShowPopupMaterialNameChanger = true;
+			Result = true;
+		}
+
+		if (bUsePhysicallyBasedRendering)
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Base color 색상");
+		}
+		else
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Diffuse 색상");
+		}
+		ImGui::SameLine(ItemsOffsetX);
+		XMFLOAT3 DiffuseColor{ MaterialData.DiffuseColor() };
+		if (ImGui::ColorEdit3(u8"##Diffuse 색상", &DiffuseColor.x, ImGuiColorEditFlags_RGB))
+		{
+			MaterialData.DiffuseColor(DiffuseColor);
+		}
+
+		if (!bUsePhysicallyBasedRendering)
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Ambient 색상");
+			ImGui::SameLine(ItemsOffsetX);
+			XMFLOAT3 AmbientColor{ MaterialData.AmbientColor() };
+			if (ImGui::ColorEdit3(u8"##Ambient 색상", &AmbientColor.x, ImGuiColorEditFlags_RGB))
+			{
+				MaterialData.AmbientColor(AmbientColor);
+			}
+		}
+
+		if (!bUsePhysicallyBasedRendering)
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Specular 색상");
+			ImGui::SameLine(ItemsOffsetX);
+			XMFLOAT3 SpecularColor{ MaterialData.SpecularColor() };
+			if (ImGui::ColorEdit3(u8"##Specular 색상", &SpecularColor.x, ImGuiColorEditFlags_RGB))
+			{
+				MaterialData.SpecularColor(SpecularColor);
+			}
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Specular 지수");
+			ImGui::SameLine(ItemsOffsetX);
+			float SpecularExponent{ MaterialData.SpecularExponent() };
+			if (ImGui::DragFloat(u8"##Specular 지수", &SpecularExponent, 0.1f, CMaterialData::KSpecularMinExponent, CMaterialData::KSpecularMaxExponent, "%.1f"))
+			{
+				MaterialData.SpecularExponent(SpecularExponent);
+			}
+		}
+
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"Specular 강도");
+		ImGui::SameLine(ItemsOffsetX);
+		float SpecularIntensity{ MaterialData.SpecularIntensity() };
+		if (ImGui::DragFloat(u8"##Specular 강도", &SpecularIntensity, 0.01f, 0.0f, 1.0f, "%.2f"))
+		{
+			MaterialData.SpecularIntensity(SpecularIntensity);
+		}
+
+		if (bUsePhysicallyBasedRendering)
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Roughness");
+			ImGui::SameLine(ItemsOffsetX);
+			float Roughness{ MaterialData.Roughness() };
+			if (ImGui::DragFloat(u8"##Roughness", &Roughness, 0.01f, 0.0f, 1.0f, "%.2f"))
+			{
+				MaterialData.Roughness(Roughness);
+			}
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Metalness");
+			ImGui::SameLine(ItemsOffsetX);
+			float Metalness{ MaterialData.Metalness() };
+			if (ImGui::DragFloat(u8"##Metalness", &Metalness, 0.01f, 0.0f, 1.0f, "%.2f"))
+			{
+				MaterialData.Metalness(Metalness);
+			}
+		}
+
+		ImGui::Separator();
+
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"텍스처");
+
+		static const ImVec2 KTextureSmallViewSize{ 60.0f, 60.0f };
+		ImGui::PushID(0);
+		if (bUsePhysicallyBasedRendering)
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Base color");
+		}
+		else
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Diffuse");
+		}
+		ImGui::SameLine(ItemsOffsetX);
+		if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::DiffuseTexture) : nullptr, KTextureSmallViewSize))
+		{
+			eSeletedTextureType = STextureData::EType::DiffuseTexture;
+			m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+			Result = true;
+		}
+		ImGui::PopID();
+
+		ImGui::PushID(1);
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"Normal");
+		ImGui::SameLine(ItemsOffsetX);
+		if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::NormalTexture) : nullptr, KTextureSmallViewSize))
+		{
+			eSeletedTextureType = STextureData::EType::NormalTexture;
+			m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+			Result = true;
+		}
+		ImGui::PopID();
+
+		ImGui::PushID(2);
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"Opacity");
+		ImGui::SameLine(ItemsOffsetX);
+		if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::OpacityTexture) : nullptr, KTextureSmallViewSize))
+		{
+			eSeletedTextureType = STextureData::EType::OpacityTexture;
+			m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+			Result = true;
+		}
+		ImGui::PopID();
+
+		ImGui::PushID(3);
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"Specular Intensity");
+		ImGui::SameLine(ItemsOffsetX);
+		if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::SpecularIntensityTexture) : nullptr, KTextureSmallViewSize))
+		{
+			eSeletedTextureType = STextureData::EType::SpecularIntensityTexture;
+			m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+			Result = true;
+		}
+		ImGui::PopID();
+
+		if (bUsePhysicallyBasedRendering)
+		{
+			ImGui::PushID(4);
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Roughness");
+			ImGui::SameLine(ItemsOffsetX);
+			if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::RoughnessTexture) : nullptr, KTextureSmallViewSize))
+			{
+				eSeletedTextureType = STextureData::EType::RoughnessTexture;
+				m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+				Result = true;
+			}
+			ImGui::PopID();
+
+			ImGui::PushID(5);
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Metalness");
+			ImGui::SameLine(ItemsOffsetX);
+			if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::MetalnessTexture) : nullptr, KTextureSmallViewSize))
+			{
+				eSeletedTextureType = STextureData::EType::MetalnessTexture;
+				m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+				Result = true;
+			}
+			ImGui::PopID();
+
+			ImGui::PushID(6);
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text(u8"Ambient Occlusion");
+			ImGui::SameLine(ItemsOffsetX);
+			if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::AmbientOcclusionTexture) : nullptr, KTextureSmallViewSize))
+			{
+				eSeletedTextureType = STextureData::EType::AmbientOcclusionTexture;
+				m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+				Result = true;
+			}
+			ImGui::PopID();
+		}
+
+		ImGui::PushID(7);
+		ImGui::AlignTextToFramePadding();
+		ImGui::Text(u8"Displacement");
+		ImGui::SameLine(ItemsOffsetX);
+		if (ImGui::ImageButton((TextureSet) ? TextureSet->GetTextureSRV(STextureData::EType::DisplacementTexture) : nullptr, KTextureSmallViewSize))
+		{
+			eSeletedTextureType = STextureData::EType::DisplacementTexture;
+			m_EditorGUIBools.bShowPopupMaterialTextureExplorer = true;
+			Result = true;
+		}
+		ImGui::PopID();
+
+		ImGui::TreePop();
+	}
+
+	return Result;
+}
+
+void CGame::DrawEditorGUIPopupMaterialNameChanger(CMaterialData*& capturedMaterialData, bool bIsEditorMaterial)
+{
+	static char OldName[KAssetNameMaxLength]{};
+	static char NewName[KAssetNameMaxLength]{};
+
+	// ### 재질 이름 변경 윈도우 ###
+	if (m_EditorGUIBools.bShowPopupMaterialNameChanger) ImGui::OpenPopup(u8"재질 이름 변경");
+
+	ImGui::SetNextWindowSize(ImVec2(240, 100), ImGuiCond_Always);
+	if (ImGui::BeginPopupModal(u8"재질 이름 변경", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+	{
+		ImGui::SetNextItemWidth(160);
+		ImGui::InputText(u8"새 이름", NewName, KAssetNameMaxLength, ImGuiInputTextFlags_EnterReturnsTrue);
+
+		ImGui::Separator();
+
+		if (ImGui::Button(u8"결정") || ImGui::IsKeyDown(VK_RETURN))
+		{
+			strcpy_s(OldName, capturedMaterialData->Name().c_str());
+
+			if (bIsEditorMaterial)
+			{
+				if (ChangeMaterialName(OldName, NewName))
+				{
+					ImGui::CloseCurrentPopup();
+					m_EditorGUIBools.bShowPopupMaterialNameChanger = false;
+					capturedMaterialData = nullptr;
+				}
+			}
+			else
+			{
+				// TODO: 이름 충돌 검사
+				// 에디터 재질이 아니면.. 이름 충돌해도 괜찮을까?
+
+				capturedMaterialData->Name(NewName);
+			}
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button(u8"닫기") || ImGui::IsKeyDown(VK_ESCAPE))
+		{
+			ImGui::CloseCurrentPopup();
+			m_EditorGUIBools.bShowPopupMaterialNameChanger = false;
+			capturedMaterialData = nullptr;
+		}
+
+		ImGui::EndPopup();
+	}
+}
+
+void CGame::DrawEditorGUIPopupMaterialTextureExplorer(CMaterialData* const capturedMaterialData, CMaterialTextureSet* const capturedMaterialTextureSet,
+	STextureData::EType eSelectedTextureType)
+{
+	// ### 텍스처 탐색기 윈도우 ###
+	if (m_EditorGUIBools.bShowPopupMaterialTextureExplorer) ImGui::OpenPopup(u8"텍스처탐색기");
+	if (ImGui::BeginPopup(u8"텍스처탐색기", ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ID3D11ShaderResourceView* SRV{};
+		if (capturedMaterialTextureSet) SRV = capturedMaterialTextureSet->GetTextureSRV(eSelectedTextureType);
+
+		if (ImGui::Button(u8"파일에서 텍스처 불러오기"))
+		{
+			static CFileDialog FileDialog{ GetWorkingDirectory() };
+			if (FileDialog.OpenFileDialog(KTextureDialogFilter, KTextureDialogTitle))
+			{
+				capturedMaterialData->SetTextureFileName(eSelectedTextureType, FileDialog.GetRelativeFileName());
+				capturedMaterialTextureSet->CreateTexture(eSelectedTextureType, *capturedMaterialData);
+			}
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button(u8"텍스처 해제하기"))
+		{
+			capturedMaterialData->ClearTextureData(eSelectedTextureType);
+			capturedMaterialTextureSet->DestroyTexture(eSelectedTextureType);
+		}
+
+		ImGui::Image(SRV, ImVec2(600, 600));
+
+		ImGui::EndPopup();
+	}
+}
+
+void CGame::DrawEditorGUIWindowSceneEditor()
+{
+	// ### 장면 편집기 윈도우 ###
+	if (m_EditorGUIBools.bShowWindowSceneEditor)
+	{
+		const auto& mapObject3D{ GetObject3DMap() };
+		const auto& mapObject2D{ GetObject2DMap() };
+		const auto& mapCamera{ GetCameraMap() };
+
+		ImGui::SetNextWindowPos(ImVec2(0, 122), ImGuiCond_Appearing);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(200, 60), ImVec2(300, 300));
+		if (ImGui::Begin(u8"장면 편집기", &m_EditorGUIBools.bShowWindowSceneEditor, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			// 오브젝트 추가
+			if (ImGui::Button(u8"오브젝트 추가"))
+			{
+				m_EditorGUIBools.bShowPopupObjectAdder = true;
+			}
+
+			// 오브젝트 제거
+			if (ImGui::Button(u8"오브젝트 제거"))
+			{
+				if (IsAnyObject3DSelected())
+				{
+					string Name{ GetSelectedObject3DName() };
+					DeleteObject3D(Name);
+				}
+				if (IsAnyObject2DSelected())
+				{
+					string Name{ GetSelectedObject2DName() };
+					DeleteObject2D(Name);
+				}
+				if (IsAnyCameraSelected())
+				{
+					string Name{ GetSelectedCameraName() };
+					DeleteCamera(Name);
+				}
+			}
+
+			ImGui::Separator();
+
+			ImGui::Text(u8"오브젝트");
+			ImGui::Separator();
+
+			if (ImGui::TreeNodeEx(u8"3D 오브젝트", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				// 3D 오브젝트 목록
+				int iObject3DPair{};
+				for (const auto& Object3DPair : mapObject3D)
+				{
+					CObject3D* const Object3D{ GetObject3D(Object3DPair.first) };
+					bool bIsThisObject3DSelected{ false };
+					if (IsAnyObject3DSelected())
+					{
+						if (GetSelectedObject3DName() == Object3DPair.first) bIsThisObject3DSelected = true;
+					}
+
+					ImGuiTreeNodeFlags Flags{ ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_Leaf };
+					if (bIsThisObject3DSelected) Flags |= ImGuiTreeNodeFlags_Selected;
+
+					ImGui::Unindent(ImGui::GetTreeNodeToLabelSpacing());
+					bool bIsNodeOpen{ ImGui::TreeNodeEx(Object3DPair.first.c_str(), Flags) };
+					if (ImGui::IsItemClicked())
+					{
+						DeselectAll();
+
+						SelectObject3D(Object3DPair.first);
+					}
+					if (bIsNodeOpen) ImGui::TreePop();
+					ImGui::Indent(ImGui::GetTreeNodeToLabelSpacing());
+
+					++iObject3DPair;
+				}
+
+				ImGui::TreePop();
+			}
+			
+			if (ImGui::TreeNodeEx(u8"카메라", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				// 카메라 목록
+				int iCameraPair{};
+				for (const auto& CameraPair : mapCamera)
+				{
+					CCamera* const Camera{ GetCamera(CameraPair.first) };
+					bool bIsThisCameraSelected{ false };
+					if (IsAnyCameraSelected())
+					{
+						if (GetSelectedCameraName() == CameraPair.first) bIsThisCameraSelected = true;
+					}
+
+					ImGuiTreeNodeFlags Flags{ ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_Leaf };
+					if (bIsThisCameraSelected) Flags |= ImGuiTreeNodeFlags_Selected;
+
+					ImGui::Unindent(ImGui::GetTreeNodeToLabelSpacing());
+					bool bIsNodeOpen{ ImGui::TreeNodeEx(CameraPair.first.c_str(), Flags) };
+					if (ImGui::IsItemClicked())
+					{
+						DeselectAll();
+
+						SelectCamera(CameraPair.first);
+					}
+					if (bIsNodeOpen) ImGui::TreePop();
+					ImGui::Indent(ImGui::GetTreeNodeToLabelSpacing());
+				}
+
+				ImGui::TreePop();
+			}
+		}
+		ImGui::End();
 	}
 }
 
 void CGame::EndRendering()
 {
+	if (m_IsDestroyed) return;
+
+	// Pass-through drawing
+	DrawScreenQuadToSceen(m_PSScreenQuad.get(), false);
+
+	m_DeviceContext->OMSetRenderTargets(1, m_DeviceRTV.GetAddressOf(), m_DepthStencilView.Get());
+	m_DeviceContext->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+	if (EFLAG_HAS(m_eFlagsRendering, EFlagsRendering::Use3DGizmos))
+	{
+		Draw3DGizmos();
+	}
+
+	DrawEditorGUI();
+
 	m_SwapChain->Present(0, 0);
 }
 
-Keyboard::State CGame::GetKeyState()
+void CGame::DrawScreenQuadToSceen(CShader* const PixelShader, bool bShouldClearDeviceRTV)
+{
+	m_DeviceContext->RSSetState(m_CommonStates->CullNone());
+
+	// Deferred texture to screen
+	m_DeviceContext->OMSetRenderTargets(1, m_DeviceRTV.GetAddressOf(), m_DepthStencilView.Get());
+	if (bShouldClearDeviceRTV) m_DeviceContext->ClearRenderTargetView(m_DeviceRTV.Get(), Colors::Transparent);
+	//m_DeviceContext->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+	m_VSScreenQuad->Use();
+	PixelShader->Use();
+
+	ID3D11SamplerState* const PointSampler{ m_CommonStates->PointWrap() };
+	m_DeviceContext->PSSetSamplers(0, 1, &PointSampler);
+	m_DeviceContext->PSSetShaderResources(0, 1, m_ScreenQuadSRV.GetAddressOf());
+
+	// Draw full-screen quad vertices
+	m_DeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_DeviceContext->IASetVertexBuffers(0, 1, m_ScreenQuadVertexBuffer.GetAddressOf(), &m_ScreenQuadVertexBufferStride, &m_ScreenQuadVertexBufferOffset);
+	m_DeviceContext->Draw(6, 0);
+
+	SetUniversalRSState();
+}
+
+Keyboard::State CGame::GetKeyState() const
 {
 	return m_Keyboard->GetState();
 }
 
-Mouse::State CGame::GetMouseState()
+Mouse::State CGame::GetMouseState() const
 { 
 	Mouse::State ResultState{ m_Mouse->GetState() };
 	
@@ -2139,57 +3750,7 @@ Mouse::State CGame::GetMouseState()
 	return ResultState;
 }
 
-
-const char* CGame::GetPickedGameObject3DName()
+const XMFLOAT2& CGame::GetWindowSize() const
 {
-	if (m_PtrPickedGameObject3D)
-	{
-		return m_PtrPickedGameObject3D->m_Name.c_str();
-	}
-	return nullptr;
-}
-
-const char* CGame::GetCapturedPickedGameObject3DName()
-{
-	if (m_PtrCapturedPickedGameObject3D)
-	{
-		return m_PtrCapturedPickedGameObject3D->m_Name.c_str();
-	}
-	return nullptr;
-}
-
-const XMFLOAT2& CGame::GetTerrainSelectionRoundUpPosition()
-{
-	assert(m_Terrain);
-	return m_Terrain->GetSelectionRoundUpPosition();
-}
-
-float CGame::GetSkyTime()
-{
-	return m_cbPSSkyTimeData.SkyTime;
-}
-
-XMMATRIX CGame::GetTransposedVPMatrix()
-{
-	return XMMatrixTranspose(m_MatrixView * m_MatrixProjection);
-}
-
-void CGame::SetTessFactor(float Value)
-{
-	m_TessFactor = Value;
-}
-
-float CGame::GetTessFactor() const
-{
-	return m_TessFactor;
-}
-
-void CGame::SetTessellationMode(ETessellationMode eMode)
-{
-	m_eTessellationMode = eMode;
-}
-
-ETessellationMode CGame::GetTessellationMode() const
-{
-	return m_eTessellationMode;
+	return m_WindowSize;
 }

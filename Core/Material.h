@@ -2,7 +2,12 @@
 
 #include "SharedHeader.h"
 
-struct alignas(4) SPixelUNorm
+struct SPixel8UInt
+{
+	uint8_t R{};
+};
+
+struct SPixel32UInt
 {
 	uint8_t R{};
 	uint8_t G{};
@@ -10,127 +15,225 @@ struct alignas(4) SPixelUNorm
 	uint8_t A{};
 };
 
-class CMaterialTexture
+struct alignas(4) SPixel128Float
+{
+	float R{};
+	float G{};
+	float B{};
+	float A{};
+};
+
+static constexpr int KMaxTextureCountPerMaterial{ 8 };
+
+struct STextureData
+{
+	enum class EType
+	{
+		DiffuseTexture,  // #0
+		BaseColorTexture = DiffuseTexture,
+
+		NormalTexture,  // #1
+		OpacityTexture, // #2
+		SpecularIntensityTexture, // #3
+
+		RoughnessTexture, // #4
+		MetalnessTexture, // #5
+
+		AmbientOcclusionTexture, // #6
+
+		DisplacementTexture // #7
+	};
+
+	bool					bHasTexture{ false };
+	bool					bIsSRGB{ false };
+	std::string				FileName{};
+	std::vector<uint8_t>	vRawData{};
+};
+
+class CMaterialData
 {
 public:
-	CMaterialTexture(ID3D11Device* PtrDevice, ID3D11DeviceContext* PtrDeviceContext) :
+	CMaterialData() {}
+	CMaterialData(const std::string& Name) : m_Name{ Name } {}
+	~CMaterialData() {}
+
+	void Name(const std::string& Name);
+	const std::string& Name() const;
+
+	void Index(size_t Value);
+	size_t Index() const;
+
+	void AmbientColor(const XMFLOAT3& Color);
+	const XMFLOAT3& AmbientColor() const;
+
+	void DiffuseColor(const XMFLOAT3& Color);
+	const XMFLOAT3& DiffuseColor() const;
+
+	void SpecularColor(const XMFLOAT3& Color);
+	const XMFLOAT3& SpecularColor() const;
+
+	void SpecularExponent(float Value);
+	float SpecularExponent() const;
+
+	void SpecularIntensity(float Value);
+	float SpecularIntensity() const;
+
+	void Roughness(float Value);
+	float Roughness() const;
+
+	void Metalness(float Value);
+	float Metalness() const;
+
+	void ClearTextureData(STextureData::EType eType);
+	STextureData& GetTextureData(STextureData::EType eType);
+	void SetTextureFileName(STextureData::EType eType, const std::string& FileName);
+	const std::string GetTextureFileName(STextureData::EType eType) const;
+
+	void ShouldGenerateMipMap(bool Value);
+	bool ShouldGenerateMipMap() const;
+
+public:
+	void HasAnyTexture(bool Value);
+	bool HasAnyTexture() const;
+	bool HasTexture(STextureData::EType eType) const { return m_TextureData[(int)eType].bHasTexture; }
+	bool IsTextureSRGB(STextureData::EType eType) const { return m_TextureData[(int)eType].bIsSRGB; }
+
+public:
+	void SetUniformColor(const XMFLOAT3& Color);
+
+public:
+	static constexpr float KSpecularMinExponent{ 0.0f };
+	static constexpr float KSpecularMaxExponent{ 1024.0f };
+
+private:
+	XMFLOAT3		m_AmbientColor{};
+	XMFLOAT3		m_DiffuseColor{};
+	XMFLOAT3		m_SpecularColor{};
+	float			m_SpecularExponent{ 1.0f }; // assimp - Shininess
+	float			m_SpecularIntensity{ 0.2f }; // assimp - Shininess strength
+
+	float			m_Roughness{}; // [0.0f, 1.0f]
+	float			m_Metalness{}; // [0.0f, 1.0f]
+
+	bool			m_bHasAnyTexture{ false };
+	STextureData	m_TextureData[KMaxTextureCountPerMaterial]{};
+
+	bool			m_bShouldGenerateMipMap{ true };
+
+private:
+	std::string		m_Name{ "DefaultMaterial" };
+	size_t			m_Index{};
+};
+
+class CTexture
+{
+public:
+	enum class EFormat
+	{
+		Pixel8Int = DXGI_FORMAT_R8_UNORM,
+		Pixel32Int = DXGI_FORMAT_R8G8B8A8_UNORM,
+		Pixel64Float = DXGI_FORMAT_R16G16B16A16_FLOAT,
+		Pixel128Float = DXGI_FORMAT_R32G32B32A32_FLOAT
+	};
+
+public:
+	CTexture(ID3D11Device* const PtrDevice, ID3D11DeviceContext* const PtrDeviceContext) :
 		m_PtrDevice{ PtrDevice }, m_PtrDeviceContext{ PtrDeviceContext }
 	{
 		assert(m_PtrDevice);
 		assert(m_PtrDeviceContext);
 	}
-	~CMaterialTexture() {}
+	~CTexture() {}
 
 public:
-	void CreateTextureFromFile(const string& TextureFileName, bool bShouldGenerateMipMap);
-	void CreateTextureFromMemory(const vector<uint8_t>& RawData);
-	void CreateBlankTexture(DXGI_FORMAT Format, const XMFLOAT2& TextureSize);
+	void CreateTextureFromFile(const std::string& FileName, bool bShouldGenerateMipMap);
+	void CreateTextureFromMemory(const std::vector<uint8_t>& RawData, bool bShouldGenerateMipMap);
+	void CreateBlankTexture(EFormat Format, const XMFLOAT2& TextureSize);
+	
+	// No mipmap auto generation.
+	void CreateCubeMapFromFile(const std::string& FileName);
+
+	void CopyTexture(ID3D11Texture2D* const Texture);
+
+	void ReleaseResources();
+
+	void SaveDDSFile(const std::string& FileName, bool bIsLookUpTexture = false);
 
 private:
-	void SetTextureSize();
+	void UpdateTextureInfo();
 
 public:
-	void UpdateTextureRawData(const SPixelUNorm* PtrData);
+	void UpdateTextureRawData(const SPixel8UInt* const PtrData);
+	void UpdateTextureRawData(const SPixel32UInt* const PtrData);
+	void UpdateTextureRawData(const SPixel128Float* const PtrData);
 	void SetSlot(UINT Slot);
 	void SetShaderType(EShaderType eShaderType);
 	void Use(int ForcedSlot = -1) const;
 
 public:
-	const string& GetFileName() const { return m_TextureFileName; }
-	ID3D11ShaderResourceView* GetShaderResourceViewPtr() { return m_ShaderResourceView.Get(); }
+	bool IsCreated() const { return m_bIsCreated; }
+	bool IssRGB() const { return m_bIssRGB; }
+	bool IsHDR() const { return m_bIsHDR; }
+	const std::string& GetFileName() const { return m_FileName; }
+	const XMFLOAT2& GetTextureSize() const { return m_TextureSize; }
+	ID3D11Texture2D* GetTexture2DPtr() const { return (m_Texture2D) ? m_Texture2D.Get() : nullptr; }
+	ID3D11ShaderResourceView* GetShaderResourceViewPtr() { return (m_ShaderResourceView) ? m_ShaderResourceView.Get() : nullptr; }
+	uint32_t GetMipLevels() const { return m_Texture2DDesc.MipLevels; }
 
 private:
-	ID3D11Device*						m_PtrDevice{};
-	ID3D11DeviceContext*				m_PtrDeviceContext{};
+	ID3D11Device* const					m_PtrDevice{};
+	ID3D11DeviceContext* const			m_PtrDeviceContext{};
 
 private:
-	string								m_TextureFileName{};
+	std::string							m_FileName{};
 	XMFLOAT2							m_TextureSize{};
 	UINT								m_Slot{};
 	EShaderType							m_eShaderType{ EShaderType::PixelShader };
+	bool								m_bIsCreated{ false };
+	bool								m_bIssRGB{ false };
+	bool								m_bIsHDR{ false };
 
 private:
 	ComPtr<ID3D11Texture2D>				m_Texture2D{};
 	ComPtr<ID3D11ShaderResourceView>	m_ShaderResourceView{};
+	D3D11_TEXTURE2D_DESC				m_Texture2DDesc{};
 };
 
-class CMaterial
+class CMaterialTextureSet
 {
 public:
-	CMaterial() {}
-	~CMaterial() {}
+	CMaterialTextureSet(ID3D11Device* const PtrDevice, ID3D11DeviceContext* const PtrDeviceContext) :
+		m_PtrDevice{ PtrDevice }, m_PtrDeviceContext{ PtrDeviceContext }
+	{
+		assert(m_PtrDevice);
+		assert(m_PtrDeviceContext);
+	}
+	~CMaterialTextureSet() {}
 
 public:
-	void SetbShouldGenerateAutoMipMap(bool Value);
-	void SetName(const string& Name);
+	void CreateTextures(CMaterialData& MaterialData);
+	void CreateTexture(STextureData::EType eType, CMaterialData& MaterialData);
+	void DestroyTexture(STextureData::EType eType);
 
-	void SetDiffuseTextureRawData(const vector<uint8_t>& Data);
-	void SetDiffuseTextureFileName(const string& FileName);
-
-	void SetNormalTextureRawData(const vector<uint8_t>& Data);
-	void SetNormalTextureFileName(const string& FileName);
-
-	void SetDisplacementTextureRawData(const vector<uint8_t>& Data);
-	void SetDisplacementTextureFileName(const string& FileName);
+	void UseTextures() const;
 
 public:
-	void SetUniformColor(const XMFLOAT3& Color);
-	void SetAmbientColor(const XMFLOAT3& Color);
-	void SetDiffuseColor(const XMFLOAT3& Color);
-	void SetSpecularColor(const XMFLOAT3& Color);
-	void SetSpecularExponent(float Exponent);
-	void SetSpecularIntensity(float Intensity);
-
-public:
-	const string& GetName() const { return m_Name; }
-	bool HasTexture() const { return bHasTexture; }
-
-	bool HasDiffuseTexture() const { return bHasDiffuseTexture; }
-	bool IsDiffuseTextureEmbedded() const { return (vEmbeddedDiffuseTextureRawData.size()) ? true : false; }
-	const string& GetDiffuseTextureFileName() const { return DiffuseTextureFileName; }
-	const vector<uint8_t>& GetDiffuseTextureRawData() const { return vEmbeddedDiffuseTextureRawData; }
-
-	bool HasNormalTexture() const { return bHasNormalTexture; }
-	bool IsNormalTextureEmbedded() const { return (vEmbeddedNormalTextureRawData.size()) ? true : false; }
-	const string& GetNormalTextureFileName() const { return NormalTextureFileName; }
-	const vector<uint8_t>& GetNormalTextureRawData() const { return vEmbeddedNormalTextureRawData; }
-
-	bool HasDisplacementTexture() const { return bHasDisplacementTexture; }
-	bool IsDisplacementTextureEmbedded() const { return (vEmbeddedDisplacementTextureRawData.size()) ? true : false; }
-	const string& GetDisplacementTextureFileName() const { return DisplacementTextureFileName; }
-	const vector<uint8_t>& GetDisplacementTextureRawData() const { return vEmbeddedDisplacementTextureRawData; }
-	
-	bool ShouldGenerateAutoMipMap() const { return m_bShouldGenerateAutoMipMap; }
-
-	const XMFLOAT3& GetAmbientColor() const { return MaterialAmbient; }
-	const XMFLOAT3& GetDiffuseColor() const { return MaterialDiffuse; }
-	const XMFLOAT3& GetSpecularColor() const { return MaterialSpecular; }
-	float GetSpecularIntensity() const { return SpecularIntensity; }
-	float GetSpecularExponent() const { return SpecularExponent; }
+	ID3D11ShaderResourceView* GetTextureSRV(STextureData::EType eType);
 
 private:
-	string					m_Name{};
+	ID3D11Device* const			m_PtrDevice{};
+	ID3D11DeviceContext* const	m_PtrDeviceContext{};
 
 private:
-	XMFLOAT3				MaterialAmbient{};
-	XMFLOAT3				MaterialDiffuse{};
-	XMFLOAT3				MaterialSpecular{};
-	float					SpecularExponent{ 1.0f };
-	float					SpecularIntensity{ 0.0f };
-
-	bool					bHasTexture{ false };
-
-	bool					bHasDiffuseTexture{ false };
-	string					DiffuseTextureFileName{};
-	vector<uint8_t>			vEmbeddedDiffuseTextureRawData{};
-
-	bool					bHasNormalTexture{ false };
-	string					NormalTextureFileName{};
-	vector<uint8_t>			vEmbeddedNormalTextureRawData{};
-
-	bool					bHasDisplacementTexture{ false };
-	string					DisplacementTextureFileName{};
-	vector<uint8_t>			vEmbeddedDisplacementTextureRawData{};
-	
-	bool					m_bShouldGenerateAutoMipMap{};
+	CTexture					m_Textures[KMaxTextureCountPerMaterial]
+	{
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext },
+		{ m_PtrDevice, m_PtrDeviceContext }
+	};
 };

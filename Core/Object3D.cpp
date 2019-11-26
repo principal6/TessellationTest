@@ -1,39 +1,39 @@
 #include "Object3D.h"
 #include "Game.h"
 
-CAssimpLoader CObject3D::ms_AssimpLoader{};
+using std::max;
+using std::min;
+using std::vector;
+using std::string;
+using std::to_string;
+using std::make_unique;
 
 void CObject3D::Create(const SMesh& Mesh)
 {
 	m_Model.vMeshes.clear();
 	m_Model.vMeshes.emplace_back(Mesh);
 
-	m_Model.vMaterials.clear();
-	m_Model.vMaterials.emplace_back();
+	m_Model.vMaterialData.clear();
+	m_Model.vMaterialData.emplace_back();
 
 	CreateMeshBuffers();
 	CreateMaterialTextures();
+
+	m_bIsCreated = true;
 }
 
-void CObject3D::Create(const SMesh& Mesh, const CMaterial& Material)
+void CObject3D::Create(const SMesh& Mesh, const CMaterialData& MaterialData)
 {
 	m_Model.vMeshes.clear();
 	m_Model.vMeshes.emplace_back(Mesh);
 
-	m_Model.vMaterials.clear();
-	m_Model.vMaterials.emplace_back(Material);
+	m_Model.vMaterialData.clear();
+	m_Model.vMaterialData.emplace_back(MaterialData);
 	
 	CreateMeshBuffers();
 	CreateMaterialTextures();
-}
 
-void CObject3D::Create(const vector<SMesh>& vMeshes, const vector<CMaterial>& vMaterials)
-{
-	m_Model.vMeshes = vMeshes;
-	m_Model.vMaterials = vMaterials;
-	
-	CreateMeshBuffers();
-	CreateMaterialTextures();
+	m_bIsCreated = true;
 }
 
 void CObject3D::Create(const SModel& Model)
@@ -42,41 +42,45 @@ void CObject3D::Create(const SModel& Model)
 
 	CreateMeshBuffers();
 	CreateMaterialTextures();
+
+	m_bIsCreated = true;
 }
 
-void CObject3D::LoadStaticModel(const string& FileName)
+void CObject3D::CreatePatches(size_t ControlPointCountPerPatch, size_t PatchCount)
 {
-	ms_AssimpLoader.LoadStaticModelFromFile(FileName, m_Model, m_PtrDevice, m_PtrDeviceContext);
-	
-	CreateMeshBuffers();
+	assert(ControlPointCountPerPatch > 0);
+	assert(PatchCount > 0);
+
+	m_ControlPointCountPerPatch = ControlPointCountPerPatch;
+	m_PatchCount = PatchCount;
+	m_bIsPatch = true;
+
+	ShouldTessellate(true);
+
+	m_bIsCreated = true;
 }
 
-void CObject3D::LoadAnimatedModel(const string& FileName)
+void CObject3D::AddMaterial(const CMaterialData& MaterialData)
 {
-	ms_AssimpLoader.LoadAnimatedModelFromFile(FileName, m_Model, m_PtrDevice, m_PtrDeviceContext);
+	m_Model.vMaterialData.emplace_back(MaterialData);
+	m_Model.vMaterialData.back().Index(m_Model.vMaterialData.size() - 1);
 
-	CreateMeshBuffers();
+	CreateMaterialTexture(m_Model.vMaterialData.size() - 1);
 }
 
-void CObject3D::AddMaterial(const CMaterial& Material)
+void CObject3D::SetMaterial(size_t Index, const CMaterialData& MaterialData)
 {
-	m_Model.vMaterials.emplace_back(Material);
+	assert(Index < m_Model.vMaterialData.size());
 
-	CreateMaterialTextures();
-}
+	m_Model.vMaterialData[Index] = MaterialData;
+	m_Model.vMaterialData[Index].Index(Index);
 
-void CObject3D::SetMaterial(size_t Index, const CMaterial& Material)
-{
-	assert(Index < m_Model.vMaterials.size());
-
-	m_Model.vMaterials[Index] = Material;
-
-	CreateMaterialTextures();
+	CreateMaterialTexture(Index);
 }
 
 size_t CObject3D::GetMaterialCount() const
 {
-	return m_Model.vMaterials.size();
+	return m_Model.vMaterialData.size();
 }
 
 void CObject3D::CreateMeshBuffers()
@@ -85,11 +89,11 @@ void CObject3D::CreateMeshBuffers()
 	m_vMeshBuffers.resize(m_Model.vMeshes.size());
 	for (size_t iMesh = 0; iMesh < m_Model.vMeshes.size(); ++iMesh)
 	{
-		CreateMeshBuffer(iMesh, m_Model.bIsModelAnimated);
+		CreateMeshBuffer(iMesh);
 	}
 }
 
-void CObject3D::CreateMeshBuffer(size_t MeshIndex, bool IsAnimated)
+void CObject3D::CreateMeshBuffer(size_t MeshIndex)
 {
 	const SMesh& Mesh{ m_Model.vMeshes[MeshIndex] };
 
@@ -105,21 +109,6 @@ void CObject3D::CreateMeshBuffer(size_t MeshIndex, bool IsAnimated)
 		D3D11_SUBRESOURCE_DATA SubresourceData{};
 		SubresourceData.pSysMem = &Mesh.vVertices[0];
 		m_PtrDevice->CreateBuffer(&BufferDesc, &SubresourceData, &m_vMeshBuffers[MeshIndex].VertexBuffer);
-	}
-
-	if (IsAnimated)
-	{
-		D3D11_BUFFER_DESC BufferDesc{};
-		BufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-		BufferDesc.ByteWidth = static_cast<UINT>(sizeof(SVertexAnimation) * Mesh.vVerticesAnimation.size());
-		BufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		BufferDesc.MiscFlags = 0;
-		BufferDesc.StructureByteStride = 0;
-		BufferDesc.Usage = D3D11_USAGE_DYNAMIC;
-
-		D3D11_SUBRESOURCE_DATA SubresourceData{};
-		SubresourceData.pSysMem = &Mesh.vVerticesAnimation[0];
-		m_PtrDevice->CreateBuffer(&BufferDesc, &SubresourceData, &m_vMeshBuffers[MeshIndex].VertexBufferAnimation);
 	}
 
 	{
@@ -139,68 +128,31 @@ void CObject3D::CreateMeshBuffer(size_t MeshIndex, bool IsAnimated)
 
 void CObject3D::CreateMaterialTextures()
 {
-	m_vDiffuseTextures.clear();
-	m_vNormalTextures.clear();
-	m_vDisplacementTextures.clear();
-
-	for (CMaterial& Material : m_Model.vMaterials)
+	m_vMaterialTextureSets.clear();
+	
+	for (CMaterialData& MaterialData : m_Model.vMaterialData)
 	{
-		m_vDiffuseTextures.emplace_back();
-		m_vNormalTextures.emplace_back();
-		m_vDisplacementTextures.emplace_back();
+		// @important
+		m_vMaterialTextureSets.emplace_back(make_unique<CMaterialTextureSet>(m_PtrDevice, m_PtrDeviceContext));
 
-		if (Material.HasTexture())
+		if (MaterialData.HasAnyTexture())
 		{
-			if (Material.HasDiffuseTexture())
-			{
-				m_vDiffuseTextures.back() = make_unique<CMaterialTexture>(m_PtrDevice, m_PtrDeviceContext);
-
-				if (Material.IsDiffuseTextureEmbedded())
-				{
-					m_vDiffuseTextures.back()->CreateTextureFromMemory(Material.GetDiffuseTextureRawData());
-				}
-				else
-				{
-					m_vDiffuseTextures.back()->CreateTextureFromFile(Material.GetDiffuseTextureFileName(), Material.ShouldGenerateAutoMipMap());
-				}
-
-				m_vDiffuseTextures.back()->SetSlot(static_cast<UINT>(m_vDiffuseTextures.size() - 1));
-			}
-
-			if (Material.HasNormalTexture())
-			{
-				m_vNormalTextures.back() = make_unique<CMaterialTexture>(m_PtrDevice, m_PtrDeviceContext);
-
-				if (Material.IsDiffuseTextureEmbedded())
-				{
-					m_vNormalTextures.back()->CreateTextureFromMemory(Material.GetNormalTextureRawData());
-				}
-				else
-				{
-					m_vNormalTextures.back()->CreateTextureFromFile(Material.GetNormalTextureFileName(), Material.ShouldGenerateAutoMipMap());
-				}
-
-				m_vNormalTextures.back()->SetSlot(static_cast<UINT>(KTerrainNormalTextureSlotOffset + m_vNormalTextures.size() - 1));
-			}
-
-			if (Material.HasDisplacementTexture())
-			{
-				m_vDisplacementTextures.back() = make_unique<CMaterialTexture>(m_PtrDevice, m_PtrDeviceContext);
-
-				if (Material.IsDiffuseTextureEmbedded())
-				{
-					m_vDisplacementTextures.back()->CreateTextureFromMemory(Material.GetDisplacementTextureRawData());
-				}
-				else
-				{
-					m_vDisplacementTextures.back()->CreateTextureFromFile(Material.GetDisplacementTextureFileName(), Material.ShouldGenerateAutoMipMap());
-				}
-
-				m_vDisplacementTextures.back()->SetSlot(static_cast<UINT>(m_vDisplacementTextures.size() - 1));
-				m_vDisplacementTextures.back()->SetShaderType(EShaderType::DomainShader);
-			}
+			m_vMaterialTextureSets.back()->CreateTextures(MaterialData);
 		}
 	}
+}
+
+void CObject3D::CreateMaterialTexture(size_t Index)
+{
+	if (Index == m_vMaterialTextureSets.size())
+	{
+		m_vMaterialTextureSets.emplace_back(make_unique<CMaterialTextureSet>(m_PtrDevice, m_PtrDeviceContext));
+	}
+	else
+	{
+		m_vMaterialTextureSets[Index] = make_unique<CMaterialTextureSet>(m_PtrDevice, m_PtrDeviceContext);
+	}
+	m_vMaterialTextureSets[Index]->CreateTextures(m_Model.vMaterialData[Index]);
 }
 
 void CObject3D::UpdateQuadUV(const XMFLOAT2& UVOffset, const XMFLOAT2& UVSize)
@@ -229,167 +181,138 @@ void CObject3D::UpdateMeshBuffer(size_t MeshIndex)
 	}
 }
 
-void CObject3D::Animate()
+void CObject3D::LimitFloatRotation(float& Value, const float Min, const float Max)
 {
-	if (!m_Model.vAnimations.size()) return;
+	if (Value > Max) Value = Min;
+	if (Value < Min) Value = Max;
+}
 
-	SModelAnimation& CurrentAnimation{ m_Model.vAnimations[m_CurrentAnimationIndex] };
-	
-	m_CurrentAnimationTick += CurrentAnimation.TicksPerSecond * 0.001f; // TEMPORARY SLOW DOWN!!
-	if (m_CurrentAnimationTick >= CurrentAnimation.Duration)
-	{
-		m_CurrentAnimationTick = 0.0f;
-	}
+void CObject3D::UpdateWorldMatrix()
+{
+	LimitFloatRotation(ComponentTransform.Pitch, CGame::KRotationMinLimit, CGame::KRotationMaxLimit);
+	LimitFloatRotation(ComponentTransform.Yaw, CGame::KRotationMinLimit, CGame::KRotationMaxLimit);
+	LimitFloatRotation(ComponentTransform.Roll, CGame::KRotationMinLimit, CGame::KRotationMaxLimit);
 
-	CalculateAnimatedBoneMatrices(m_Model.vNodes[0], XMMatrixIdentity());
+	if (XMVectorGetX(ComponentTransform.Scaling) < CGame::KScalingMinLimit)
+		ComponentTransform.Scaling = XMVectorSetX(ComponentTransform.Scaling, CGame::KScalingMinLimit);
+	if (XMVectorGetY(ComponentTransform.Scaling) < CGame::KScalingMinLimit)
+		ComponentTransform.Scaling = XMVectorSetY(ComponentTransform.Scaling, CGame::KScalingMinLimit);
+	if (XMVectorGetZ(ComponentTransform.Scaling) < CGame::KScalingMinLimit)
+		ComponentTransform.Scaling = XMVectorSetZ(ComponentTransform.Scaling, CGame::KScalingMinLimit);
 
-	m_PtrGame->UpdateVSAnimationBoneMatrices(m_AnimatedBoneMatrices);
+	XMMATRIX Translation{ XMMatrixTranslationFromVector(ComponentTransform.Translation) };
+	XMMATRIX Rotation{ XMMatrixRotationRollPitchYaw(ComponentTransform.Pitch,
+		ComponentTransform.Yaw, ComponentTransform.Roll) };
+	XMMATRIX Scaling{ XMMatrixScalingFromVector(ComponentTransform.Scaling) };
+
+	// @important
+	float ScalingX{ XMVectorGetX(ComponentTransform.Scaling) };
+	float ScalingY{ XMVectorGetY(ComponentTransform.Scaling) };
+	float ScalingZ{ XMVectorGetZ(ComponentTransform.Scaling) };
+	float MaxScaling{ max(ScalingX, max(ScalingY, ScalingZ)) };
+	ComponentPhysics.BoundingSphere.Radius = ComponentPhysics.BoundingSphere.RadiusBias * MaxScaling;
+
+	XMMATRIX BoundingSphereTranslation{ XMMatrixTranslationFromVector(ComponentPhysics.BoundingSphere.CenterOffset) };
+	XMMATRIX BoundingSphereTranslationOpposite{ XMMatrixTranslationFromVector(-ComponentPhysics.BoundingSphere.CenterOffset) };
+
+	ComponentTransform.MatrixWorld = Scaling * BoundingSphereTranslationOpposite * Rotation * Translation * BoundingSphereTranslation;
 }
 
 void CObject3D::ShouldTessellate(bool Value)
 {
-	m_bTesselate = Value;
+	m_bShouldTesselate = Value;
 }
 
-void CObject3D::CalculateAnimatedBoneMatrices(const SModelNode& Node, XMMATRIX ParentTransform)
+void CObject3D::TessellationType(ETessellationType eType)
 {
-	XMMATRIX MatrixTransformation{ Node.MatrixTransformation * ParentTransform };
-
-	if (Node.bIsBone)
-	{
-		SModelAnimation& CurrentAnimation{ m_Model.vAnimations[m_CurrentAnimationIndex] };
-		if (CurrentAnimation.vNodeAnimations.size())
-		{
-			if (CurrentAnimation.mapNodeAnimationNameToIndex.find(Node.Name) != CurrentAnimation.mapNodeAnimationNameToIndex.end())
-			{
-				size_t NodeAnimationIndex{ CurrentAnimation.mapNodeAnimationNameToIndex[Node.Name] };
-
-				SModelNodeAnimation& NodeAnimation{ CurrentAnimation.vNodeAnimations[NodeAnimationIndex] };
-
-				XMMATRIX MatrixPosition{ XMMatrixIdentity() };
-				XMMATRIX MatrixRotation{ XMMatrixIdentity() };
-				XMMATRIX MatrixScaling{ XMMatrixIdentity() };
-
-				{
-					vector<SModelNodeAnimation::SKey>& vKeys{ NodeAnimation.vPositionKeys };
-					SModelNodeAnimation::SKey KeyA{};
-					SModelNodeAnimation::SKey KeyB{};
-					for (uint32_t iKey = 0; iKey < (uint32_t)vKeys.size(); ++iKey)
-					{
-						if (vKeys[iKey].Time <= m_CurrentAnimationTick)
-						{
-							KeyA = vKeys[iKey];
-							KeyB = vKeys[(iKey < (uint32_t)vKeys.size() - 1) ? iKey + 1 : 0];
-						}
-					}
-
-					MatrixPosition = XMMatrixTranslationFromVector(KeyA.Value);
-				}
-
-				{
-					vector<SModelNodeAnimation::SKey>& vKeys{ NodeAnimation.vRotationKeys };
-					SModelNodeAnimation::SKey KeyA{};
-					SModelNodeAnimation::SKey KeyB{};
-					for (uint32_t iKey = 0; iKey < (uint32_t)vKeys.size(); ++iKey)
-					{
-						if (vKeys[iKey].Time <= m_CurrentAnimationTick)
-						{
-							KeyA = vKeys[iKey];
-							KeyB = vKeys[(iKey < (uint32_t)vKeys.size() - 1) ? iKey + 1 : 0];
-						}
-					}
-
-					MatrixRotation = XMMatrixRotationQuaternion(KeyA.Value);
-				}
-
-				{
-					vector<SModelNodeAnimation::SKey>& vKeys{ NodeAnimation.vScalingKeys };
-					SModelNodeAnimation::SKey KeyA{};
-					SModelNodeAnimation::SKey KeyB{};
-					for (uint32_t iKey = 0; iKey < (uint32_t)vKeys.size(); ++iKey)
-					{
-						if (vKeys[iKey].Time <= m_CurrentAnimationTick)
-						{
-							KeyA = vKeys[iKey];
-							KeyB = vKeys[(iKey < (uint32_t)vKeys.size() - 1) ? iKey + 1 : 0];
-						}
-					}
-
-					MatrixScaling = XMMatrixScalingFromVector(KeyA.Value);
-				}
-
-				MatrixTransformation = MatrixScaling * MatrixRotation * MatrixPosition * ParentTransform;
-			}
-		}
-
-		// Transpose at the last moment!
-		m_AnimatedBoneMatrices[Node.BoneIndex] = XMMatrixTranspose(Node.MatrixBoneOffset * MatrixTransformation);
-	}
-	
-	if (Node.vChildNodeIndices.size())
-	{
-		for (auto iChild : Node.vChildNodeIndices)
-		{
-			CalculateAnimatedBoneMatrices(m_Model.vNodes[iChild], MatrixTransformation);
-		}
-	}
+	m_eTessellationType = eType;
 }
 
-void CObject3D::Draw(bool bIgnoreOwnTexture) const
+CObject3D::ETessellationType CObject3D::TessellationType() const
 {
-	for (size_t iMesh = 0; iMesh < m_Model.vMeshes.size(); ++iMesh)
-	{
-		const SMesh& Mesh{ m_Model.vMeshes[iMesh] };
-		const CMaterial& Material{ m_Model.vMaterials[Mesh.MaterialID] };
+	return m_eTessellationType;
+}
 
-		m_PtrGame->UpdateVSBaseMaterial(Material);
+void CObject3D::SetTessFactorData(const CObject3D::SCBTessFactorData& Data)
+{
+	m_CBTessFactorData = Data;
+}
+
+const CObject3D::SCBTessFactorData& CObject3D::GetTessFactorData() const
+{
+	return m_CBTessFactorData;
+}
+
+void CObject3D::SetDisplacementData(const CObject3D::SCBDisplacementData& Data)
+{
+	m_CBDisplacementData = Data;
+}
+
+const CObject3D::SCBDisplacementData& CObject3D::GetDisplacementData() const
+{
+	return m_CBDisplacementData;
+}
+
+CMaterialTextureSet* CObject3D::GetMaterialTextureSet(size_t iMaterial)
+{
+	if (iMaterial >= m_vMaterialTextureSets.size()) return nullptr;
+	return m_vMaterialTextureSets[iMaterial].get();
+}
+
+void CObject3D::Draw(bool bIgnoreOwnTexture, bool bIgnoreInstances) const
+{
+	if (IsPatches())
+	{
+		switch (m_ControlPointCountPerPatch)
+		{
+		default:
+		case 1:
+			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST);
+			break;
+		case 2:
+			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_2_CONTROL_POINT_PATCHLIST);
+			break;
+		case 3:
+			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+			break;
+		case 4:
+			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST);
+			break;
+		}
 		
-		if (Material.HasTexture() && !bIgnoreOwnTexture)
+		m_PtrDeviceContext->Draw((uint32_t)m_PatchCount, 0);
+	}
+	else
+	{
+		for (size_t iMesh = 0; iMesh < m_Model.vMeshes.size(); ++iMesh)
 		{
-			if (m_Model.bUseMultipleTexturesInSingleMesh)
+			const SMesh& Mesh{ m_Model.vMeshes[iMesh] };
+			const CMaterialData& MaterialData{ m_Model.vMaterialData[Mesh.MaterialID] };
+
+			// per mesh
+			m_PtrGame->UpdateCBMaterialData(MaterialData);
+
+			if (MaterialData.HasAnyTexture() && !bIgnoreOwnTexture)
 			{
-				for (const auto& DiffuseTexture : m_vDiffuseTextures)
-				{
-					if (DiffuseTexture) DiffuseTexture->Use();
-				}
-				for (const auto& NormalTexture : m_vNormalTextures)
-				{
-					if (NormalTexture) NormalTexture->Use();
-				}
-				for (const auto& DisplacementTexture : m_vDisplacementTextures)
-				{
-					if (DisplacementTexture) DisplacementTexture->Use();
-				}
+				const CMaterialTextureSet* MaterialTextureSet{ m_vMaterialTextureSets[Mesh.MaterialID].get() };
+				MaterialTextureSet->UseTextures();
+			}
+
+			if (ShouldTessellate())
+			{
+				m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
 			}
 			else
 			{
-				if (m_vDiffuseTextures[Mesh.MaterialID]) m_vDiffuseTextures[Mesh.MaterialID]->Use();
-				if (m_vNormalTextures[Mesh.MaterialID]) m_vNormalTextures[Mesh.MaterialID]->Use();
-				if (m_vDisplacementTextures[Mesh.MaterialID]) m_vDisplacementTextures[Mesh.MaterialID]->Use();
+				m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			}
+
+			m_PtrDeviceContext->IASetIndexBuffer(m_vMeshBuffers[iMesh].IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+			m_PtrDeviceContext->IASetVertexBuffers(0, 1, m_vMeshBuffers[iMesh].VertexBuffer.GetAddressOf(),
+				&m_vMeshBuffers[iMesh].VertexBufferStride, &m_vMeshBuffers[iMesh].VertexBufferOffset);
+
+			m_PtrDeviceContext->DrawIndexed(static_cast<UINT>(Mesh.vTriangles.size() * 3), 0, 0);
 		}
-
-		m_PtrDeviceContext->IASetIndexBuffer(m_vMeshBuffers[iMesh].IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-
-		m_PtrDeviceContext->IASetVertexBuffers(0, 1, m_vMeshBuffers[iMesh].VertexBuffer.GetAddressOf(), 
-			&m_vMeshBuffers[iMesh].VertexBufferStride, &m_vMeshBuffers[iMesh].VertexBufferOffset);
-
-		if (m_Model.bIsModelAnimated)
-		{
-			m_PtrDeviceContext->IASetVertexBuffers(1, 1, m_vMeshBuffers[iMesh].VertexBufferAnimation.GetAddressOf(),
-				&m_vMeshBuffers[iMesh].VertexBufferAnimationStride, &m_vMeshBuffers[iMesh].VertexBufferAnimationOffset);
-		}
-
-		if (m_bTesselate)
-		{
-			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
-		}
-		else
-		{
-			m_PtrDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		}
-		
-
-		m_PtrDeviceContext->DrawIndexed(static_cast<UINT>(Mesh.vTriangles.size() * 3), 0, 0);
 	}
 }

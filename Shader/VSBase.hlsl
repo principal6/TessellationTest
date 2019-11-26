@@ -1,25 +1,30 @@
-#include "Header.hlsli"
+#include "Base.hlsli"
 
 cbuffer cbSpace : register(b0)
 {
-	float4x4 WVP;
 	float4x4 World;
+	float4x4 ViewProjection;
+	float4x4 WVP;
 }
 
-VS_OUTPUT main(VS_INPUT input)
+VS_OUTPUT main(VS_INPUT Input)
 {
-	VS_OUTPUT output;
+	VS_OUTPUT Output;
 
-	output.Position = mul(input.Position, WVP);
-	output.WorldPosition = mul(input.Position, World);
-	output.Color = input.Color;
-	output.UV = input.UV;
+	Output.WorldPosition = mul(Input.Position, World);
+	Output.Position = mul(Output.WorldPosition, ViewProjection);
 
-	output.WorldNormal = normalize(mul(input.Normal, World));
-	output.WorldTangent = normalize(mul(input.Tangent, World));
-	output.WorldBitangent = float4(normalize(cross(output.WorldNormal.xyz, output.WorldTangent.xyz)), 0);
+	Output.Color = Input.Color;
+	Output.TexCoord = Input.TexCoord;
 
-	output.bUseVertexColor = 0;
+	float4 ResultNormal = normalize(mul(Input.Normal, World));
+	float4 ResultBitangent = normalize(float4(cross(ResultNormal.xyz, Input.Tangent.xyz), 0));
+	float4 ResultTangent = normalize(float4(cross(ResultBitangent.xyz, ResultNormal.xyz), 0));
+	Output.WorldNormal = ResultNormal;
+	Output.WorldTangent = normalize(mul(ResultTangent, World));
+	Output.WorldBitangent = normalize(mul(ResultBitangent, World));
 
-	return output;
+	Output.bUseVertexColor = 0;
+
+	return Output;
 }

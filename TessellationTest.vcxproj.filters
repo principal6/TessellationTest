@@ -1,0 +1,315 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Core">
+      <UniqueIdentifier>{e7742bd8-ce13-4244-aace-06ea5cc71f10}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DirectXTK">
+      <UniqueIdentifier>{b07e25a1-17f2-4725-af43-18ed295db089}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader">
+      <UniqueIdentifier>{84a330a2-7e4e-44df-8f66-cb091b8c6119}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TinyXml2">
+      <UniqueIdentifier>{fff3cf0d-0073-4b99-a250-3f6d9ace4d91}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ImGui">
+      <UniqueIdentifier>{255b61e1-9548-4bef-88e8-04c84308370a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DirectXTex">
+      <UniqueIdentifier>{63521b96-aa1f-438e-b769-134dd7ee43a0}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Core\Shader.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Object3D.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Game.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Camera.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Object2D.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="TinyXml2\tinyxml2.cpp">
+      <Filter>TinyXml2</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Object3DLine.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_demo.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_draw.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_impl_dx11.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_impl_win32.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="ImGui\imgui_widgets.cpp">
+      <Filter>ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Material.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\FileDialog.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\BinaryFile.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="Core\ConstantBuffer.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DirectXTK\Audio.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\CommonStates.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\DDSTextureLoader.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\DirectXHelpers.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\Effects.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\GamePad.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\GeometricPrimitive.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\GraphicsMemory.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\Keyboard.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\Model.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\Mouse.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\PostProcess.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\PrimitiveBatch.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\ScreenGrab.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\SimpleMath.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\SpriteBatch.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\SpriteFont.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\VertexTypes.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\WICTextureLoader.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\XboxDDSTextureLoader.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTK\DirectXTK.h">
+      <Filter>DirectXTK</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Shader.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\SharedHeader.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Object3D.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\PrimitiveGenerator.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Math.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Game.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Camera.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Object2D.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="TinyXml2\tinyxml2.h">
+      <Filter>TinyXml2</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Object3DLine.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imconfig.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_impl_dx11.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_impl_win32.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imgui_internal.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_rectpack.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_textedit.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGui\imstb_truetype.h">
+      <Filter>ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Material.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\FileDialog.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\BinaryFile.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\ConstantBuffer.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectXTex\DirectXTex.h">
+      <Filter>DirectXTex</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="DirectXTK\DirectXTK.lib">
+      <Filter>DirectXTK</Filter>
+    </Library>
+    <Library Include="DirectXTex\DirectXTex.lib">
+      <Filter>DirectXTex</Filter>
+    </Library>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="DirectXTK\SimpleMath.inl">
+      <Filter>DirectXTK</Filter>
+    </None>
+    <None Include="Shader\Line.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="Shader\Base2D.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="Shader\Base.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="Shader\Deferred.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="Shader\BRDF.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="Shader\Shared.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+    <None Include="DirectXTex\DirectXTex.inl">
+      <Filter>DirectXTex</Filter>
+    </None>
+    <None Include="Shader\Quad.hlsli">
+      <Filter>Shader</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Shader\GSNormal.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSBase.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSBase.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSSky.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSLine.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSLine.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSVertexColor.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSBase2D.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSBase2D.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSGizmo.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSGizmo.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSScreenQuad.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSScreenQuad.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSSky.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\HSTri.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\DSTri.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\VSNull.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\HSQuadSphere.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\DSQuadSphere.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="Shader\PSTest.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="ImGui\imgui.natvis">
+      <Filter>ImGui</Filter>
+    </Natvis>
+  </ItemGroup>
+</Project>
