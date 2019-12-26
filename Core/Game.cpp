@@ -2533,8 +2533,8 @@ void CGame::DrawEditorGUIPopupObjectAdder()
 		static const char* const KOptions[2]{ u8"3D 도형 (삼각형)", u8"2-패치 구 (제어점 1개)" };
 		static int iSelectedOption{};
 
-		static const char* const K3DPrimitiveTypes[9]{ u8"정사각형(XY)", u8"정사각형(XZ)", u8"정사각형(YZ)",
-				u8"원", u8"정육면체", u8"각뿔", u8"각기둥", u8"구", u8"도넛(Torus)" };
+		static const char* const K3DPrimitiveTypes[10]{ u8"정사각형(XY)", u8"정사각형(XZ)", u8"정사각형(YZ)",
+				u8"원", u8"정육면체", u8"각뿔", u8"각기둥", u8"구", u8"도넛(Torus)", u8"베지에 삼각형" };
 		static int iSelected3DPrimitiveType{};
 		static uint32_t SideCount{ KDefaultPrimitiveDetail };
 		static uint32_t SegmentCount{ KDefaultPrimitiveDetail };
@@ -2703,6 +2703,17 @@ void CGame::DrawEditorGUIPopupObjectAdder()
 				case 8:
 					Mesh = GenerateTorus(InnerRadius, SideCount, SegmentCount);
 					Object3D->ComponentPhysics.BoundingSphere.Radius += InnerRadius;
+					break;
+				case 9:
+					Mesh = GenerateTriangle(
+						XMVectorSet(0, 1.732f, 0, 1), XMVectorSet(+1.0f, 0, 0, 1), XMVectorSet(-1.0f, 0, 0, 1),
+						XMVectorSet(1, 0, 0, 1), XMVectorSet(0, 1, 0, 1), XMVectorSet(0, 0, 1, 1));
+					
+					Mesh.vVertices[0].Normal = XMVector3Normalize(XMVectorSet(    0, +0.5f, -0.5f, 0));
+					Mesh.vVertices[1].Normal = XMVector3Normalize(XMVectorSet(+0.5f, -0.5f, -0.5f, 0));
+					Mesh.vVertices[2].Normal = XMVector3Normalize(XMVectorSet(-0.5f, -0.5f, -0.5f, 0));
+
+					Object3D->ComponentRender.PtrPS = m_PSVertexColor.get();
 					break;
 				default:
 					break;

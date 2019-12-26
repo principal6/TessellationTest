@@ -8,7 +8,7 @@ cbuffer cbSpace : register(b0)
 }
 
 [domain("quad")]
-DS_OUTPUT main(HS_CONSTANT_DATA_OUTPUT Input, float2 Domain : SV_DomainLocation, const OutputPatch<HS_OUTPUT, 1> ControlPoints)
+DS_OUTPUT main(HS_CONSTANT_DATA_OUTPUT ConstantData, float2 Domain : SV_DomainLocation, const OutputPatch<HS_OUTPUT, 1> ControlPoints)
 {
 	DS_OUTPUT Output;
 

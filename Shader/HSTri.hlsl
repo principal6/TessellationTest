@@ -7,7 +7,7 @@ cbuffer cbTessFactor : register(b0)
 	float2 Pads;
 }
 
-HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(InputPatch<VS_OUTPUT, 3> Patch, uint PatchID : SV_PrimitiveID)
+HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(InputPatch<VS_OUTPUT, 3> ControlPoints, uint PatchID : SV_PrimitiveID)
 {
 	HS_CONSTANT_DATA_OUTPUT Output;
 
@@ -26,11 +26,11 @@ HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(InputPatch<VS_OUTPUT, 3> Patch, uin
 [outputtopology("triangle_cw")]
 [partitioning("fractional_odd")]
 [patchconstantfunc("CalcHSPatchConstants")]
-HS_OUTPUT main(InputPatch<VS_OUTPUT, 3> Patch, uint i : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
+HS_OUTPUT main(InputPatch<VS_OUTPUT, 3> ControlPoints, uint ControlPointID : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
 {
 	HS_OUTPUT Output;
 
-	Output = Patch[i];
+	Output = ControlPoints[ControlPointID];
 
 	return Output;
 }
@@ -41,11 +41,11 @@ HS_OUTPUT main(InputPatch<VS_OUTPUT, 3> Patch, uint i : SV_OutputControlPointID,
 [outputtopology("triangle_cw")]
 [partitioning("fractional_even")]
 [patchconstantfunc("CalcHSPatchConstants")]
-HS_OUTPUT even(InputPatch<VS_OUTPUT, 3> Patch, uint i : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
+HS_OUTPUT even(InputPatch<VS_OUTPUT, 3> ControlPoints, uint ControlPointID : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
 {
 	HS_OUTPUT Output;
 
-	Output = Patch[i];
+	Output = ControlPoints[ControlPointID];
 
 	return Output;
 }
@@ -56,11 +56,11 @@ HS_OUTPUT even(InputPatch<VS_OUTPUT, 3> Patch, uint i : SV_OutputControlPointID,
 [outputtopology("triangle_cw")]
 [partitioning("integer")]
 [patchconstantfunc("CalcHSPatchConstants")]
-HS_OUTPUT integer(InputPatch<VS_OUTPUT, 3> Patch, uint i : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
+HS_OUTPUT integer(InputPatch<VS_OUTPUT, 3> ControlPoints, uint ControlPointID : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
 {
 	HS_OUTPUT Output;
 
-	Output = Patch[i];
+	Output = ControlPoints[ControlPointID];
 
 	return Output;
 }

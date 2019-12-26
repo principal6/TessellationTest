@@ -25,7 +25,7 @@ HS_CONSTANT_DATA_OUTPUT CalcHSPatchConstants(uint PatchID : SV_PrimitiveID)
 [outputtopology("triangle_ccw")]
 [partitioning("integer")]
 [patchconstantfunc("CalcHSPatchConstants")]
-HS_OUTPUT main(uint i : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
+HS_OUTPUT main(uint ControlPointID : SV_OutputControlPointID, uint PatchID : SV_PrimitiveID)
 {
 	HS_OUTPUT Output;
 
